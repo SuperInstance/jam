@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 const AGENT_COLORS = [
   '#3b82f6', '#8b5cf6', '#22c55e', '#f97316', '#ec4899', '#06b6d4',
@@ -8,6 +8,40 @@ const RUNTIMES = [
   { id: 'claude-code', label: 'Claude Code' },
   { id: 'opencode', label: 'OpenCode' },
 ];
+
+type TTSProvider = 'openai' | 'elevenlabs';
+
+const TTS_VOICES: Record<TTSProvider, Array<{ id: string; label: string }>> = {
+  openai: [
+    { id: 'alloy', label: 'Alloy' },
+    { id: 'ash', label: 'Ash' },
+    { id: 'ballad', label: 'Ballad' },
+    { id: 'coral', label: 'Coral' },
+    { id: 'echo', label: 'Echo' },
+    { id: 'fable', label: 'Fable' },
+    { id: 'nova', label: 'Nova' },
+    { id: 'onyx', label: 'Onyx' },
+    { id: 'sage', label: 'Sage' },
+    { id: 'shimmer', label: 'Shimmer' },
+  ],
+  elevenlabs: [
+    { id: 'pNInz6obpgDQGcFmaJgB', label: 'Adam (Deep, Narration)' },
+    { id: 'EXAVITQu4vr4xnSDxMaL', label: 'Bella (Soft, Feminine)' },
+    { id: 'onwK4e9ZLuTAKqWW03F9', label: 'Daniel (Authoritative, British)' },
+    { id: 'AZnzlk1XvdvUeBnXmlld', label: 'Domi (Strong, Feminine)' },
+    { id: 'MF3mGyEYCl7XYWbV9V6O', label: 'Elli (Friendly, Young)' },
+    { id: 'jsCqWAovK2LkecY7zXl4', label: 'Freya (Expressive, Nordic)' },
+    { id: 'oWAxZDx7w5VEj9dCyTzz', label: 'Grace (Southern, Warm)' },
+    { id: 'N2lVS1w4EtoT3dr4eOWO', label: 'Callum (Intense, Transatlantic)' },
+    { id: 'IKne3meq5aSn9XLyUdCD', label: 'Charlie (Natural, Australian)' },
+    { id: 'XB0fDUnXU5powFXDhCwa', label: 'Charlotte (Swedish, Seductive)' },
+    { id: '21m00Tcm4TlvDq8ikWAM', label: 'Rachel (Calm, American)' },
+    { id: 'yoZ06aMxZJJ28mfd3POQ', label: 'Sam (Raspy, American)' },
+    { id: 'ThT5KcBeYPX3keUQqHPh', label: 'Dorothy (Pleasant, British)' },
+    { id: 'VR6AewLTigWG4xSOukaG', label: 'Arnold (Crisp, American)' },
+    { id: 'ErXwobaYiN019PkySvjV', label: 'Antoni (Well-rounded)' },
+  ],
+};
 
 interface AgentConfigFormProps {
   onSubmit: (profile: Record<string, unknown>) => void;
@@ -24,17 +58,32 @@ export const AgentConfigForm: React.FC<AgentConfigFormProps> = ({
   const [systemPrompt, setSystemPrompt] = useState('');
   const [color, setColor] = useState(AGENT_COLORS[0]);
   const [ttsVoiceId, setTtsVoiceId] = useState('');
+  const [ttsProvider, setTtsProvider] = useState<TTSProvider>('openai');
   const [cwd, setCwd] = useState('');
+
+  // Load default voice from global config
+  useEffect(() => {
+    window.jam.config.get().then((c) => {
+      const provider = (c.ttsProvider as TTSProvider) || 'openai';
+      const defaultVoice = (c.ttsVoice as string) || TTS_VOICES[provider][0]?.id || '';
+      setTtsProvider(provider);
+      setTtsVoiceId(defaultVoice);
+    });
+  }, []);
+
+  const voices = TTS_VOICES[ttsProvider] || [];
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    // Use the first voice for the active provider as ultimate fallback
+    const voiceId = ttsVoiceId || voices[0]?.id || 'alloy';
     onSubmit({
       name,
       runtime,
       model: model || undefined,
       systemPrompt: systemPrompt || undefined,
       color,
-      voice: { ttsVoiceId: ttsVoiceId || 'default' },
+      voice: { ttsVoiceId: voiceId },
       cwd: cwd || undefined,
     });
   };
@@ -108,16 +157,18 @@ export const AgentConfigForm: React.FC<AgentConfigFormProps> = ({
       </div>
 
       <div>
-        <label className="block text-xs text-zinc-400 mb-1">
-          TTS Voice ID
-        </label>
-        <input
-          type="text"
+        <label className="block text-xs text-zinc-400 mb-1">Voice</label>
+        <select
           value={ttsVoiceId}
           onChange={(e) => setTtsVoiceId(e.target.value)}
-          placeholder="ElevenLabs voice ID"
-          className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
-        />
+          className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-blue-500"
+        >
+          {voices.map((v) => (
+            <option key={v.id} value={v.id}>
+              {v.label}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div>

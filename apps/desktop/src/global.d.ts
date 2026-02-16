@@ -69,7 +69,10 @@ export interface JamAPI {
       }) => void,
     ) => () => void;
     onTTSAudio: (
-      callback: (data: { agentId: string; audioPath: string }) => void,
+      callback: (data: { agentId: string; audioData: string }) => void,
+    ) => () => void;
+    onStateChange: (
+      callback: (data: { state: string }) => void,
     ) => () => void;
     requestTTS: (
       agentId: string,
@@ -97,6 +100,12 @@ export interface JamAPI {
     set: (
       config: Record<string, unknown>,
     ) => Promise<{ success: boolean }>;
+  };
+
+  apiKeys: {
+    set: (service: string, key: string) => Promise<{ success: boolean }>;
+    has: (service: string) => Promise<boolean>;
+    delete: (service: string) => Promise<{ success: boolean }>;
   };
 
   window: {

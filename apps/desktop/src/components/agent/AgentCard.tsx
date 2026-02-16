@@ -11,6 +11,7 @@ interface AgentCardProps {
   onClick: () => void;
   onStart: () => void;
   onStop: () => void;
+  onDelete: () => void;
   isRunning: boolean;
 }
 
@@ -23,6 +24,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
   onClick,
   onStart,
   onStop,
+  onDelete,
   isRunning,
 }) => {
   return (
@@ -55,32 +57,49 @@ export const AgentCard: React.FC<AgentCardProps> = ({
         </div>
       </div>
 
-      {/* Start/Stop button */}
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          isRunning ? onStop() : onStart();
-        }}
-        className={`
-          titlebar-no-drag w-7 h-7 flex items-center justify-center rounded
-          transition-colors text-xs
-          ${isRunning
-            ? 'hover:bg-red-900/50 text-red-400 hover:text-red-300'
-            : 'hover:bg-green-900/50 text-green-400 hover:text-green-300'
-          }
-        `}
-        aria-label={isRunning ? 'Stop agent' : 'Start agent'}
-      >
-        {isRunning ? (
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
-            <rect width="10" height="10" rx="1" />
-          </svg>
-        ) : (
-          <svg width="10" height="12" viewBox="0 0 10 12" fill="currentColor">
-            <path d="M0 0L10 6L0 12Z" />
-          </svg>
+      {/* Action buttons */}
+      <div className="flex items-center gap-0.5">
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            isRunning ? onStop() : onStart();
+          }}
+          className={`
+            titlebar-no-drag w-7 h-7 flex items-center justify-center rounded
+            transition-colors text-xs
+            ${isRunning
+              ? 'hover:bg-red-900/50 text-red-400 hover:text-red-300'
+              : 'hover:bg-green-900/50 text-green-400 hover:text-green-300'
+            }
+          `}
+          aria-label={isRunning ? 'Stop agent' : 'Start agent'}
+        >
+          {isRunning ? (
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+              <rect width="10" height="10" rx="1" />
+            </svg>
+          ) : (
+            <svg width="10" height="12" viewBox="0 0 10 12" fill="currentColor">
+              <path d="M0 0L10 6L0 12Z" />
+            </svg>
+          )}
+        </button>
+        {!isRunning && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+            className="titlebar-no-drag w-7 h-7 flex items-center justify-center rounded transition-colors text-xs hover:bg-red-900/50 text-zinc-500 hover:text-red-400"
+            aria-label="Delete agent"
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" stroke="currentColor" strokeWidth="1.5" fill="none">
+              <line x1="1" y1="1" x2="9" y2="9" />
+              <line x1="9" y1="1" x2="1" y2="9" />
+            </svg>
+          </button>
         )}
-      </button>
+      </div>
     </div>
   );
 };

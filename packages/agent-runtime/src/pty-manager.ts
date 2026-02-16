@@ -1,5 +1,16 @@
 import type { AgentId } from '@jam/core';
+import { createLogger } from '@jam/core';
 import type * as pty from 'node-pty';
+
+const log = createLogger('PtyManager');
+
+/**
+ * Escape a string for use in a shell command.
+ * Wraps in single quotes, escaping any embedded single quotes.
+ */
+function shellEscape(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
 
 export interface PtyInstance {
   agentId: AgentId;
@@ -50,17 +61,31 @@ export class PtyManager {
       // Dynamic import to avoid issues in renderer/test contexts
       const nodePty = await import('node-pty');
 
-      const ptyProcess = nodePty.spawn(command, args, {
+      // Spawn through the user's login shell. This is essential in Electron
+      // because: (1) the shell handles PATH resolution, shebang execution,
+      // and dyld environment correctly, (2) Electron's hardened runtime can
+      // interfere with direct posix_spawnp of external binaries, and
+      // (3) login shells source the user's profile for the full environment.
+      const shell = process.env.SHELL || '/bin/zsh';
+      const shellCmd = [command, ...args].map(shellEscape).join(' ');
+      log.info(`Spawning via shell: ${shell} -lc ${shellCmd}`, undefined, agentId);
+
+      // Build a clean env — filter out undefined values that can break posix_spawnp
+      const env: Record<string, string> = {};
+      for (const [k, v] of Object.entries(process.env)) {
+        if (v !== undefined) env[k] = v;
+      }
+      Object.assign(env, options.env, {
+        TERM: 'xterm-256color',
+        COLORTERM: 'truecolor',
+      });
+
+      const ptyProcess = nodePty.spawn(shell, ['-lc', shellCmd], {
         name: 'xterm-256color',
         cols: options.cols ?? 120,
         rows: options.rows ?? 30,
         cwd: options.cwd ?? process.env.HOME ?? '/',
-        env: {
-          ...process.env,
-          ...options.env,
-          TERM: 'xterm-256color',
-          COLORTERM: 'truecolor',
-        } as Record<string, string>,
+        env,
       });
 
       const instance: PtyInstance = {
@@ -111,8 +136,10 @@ export class PtyManager {
       });
 
       this.instances.set(agentId, instance);
+      log.info(`Spawned PTY for agent: ${command} ${args.join(' ')} (PID: ${ptyProcess.pid})`, undefined, agentId);
       return { success: true, pid: ptyProcess.pid };
     } catch (error) {
+      log.error(`Failed to spawn PTY: ${String(error)}`, { command, args }, agentId);
       return { success: false, error: String(error) };
     }
   }

@@ -5,7 +5,10 @@ import type {
   AgentId,
   TranscriptionResult,
 } from '@jam/core';
+import { createLogger } from '@jam/core';
 import { CommandParser, type ParsedCommand } from './command-parser.js';
+
+const log = createLogger('VoiceService');
 
 export interface VoiceServiceConfig {
   sttProvider: ISTTProvider;
@@ -35,9 +38,11 @@ export class VoiceService {
 
   async transcribe(audio: Buffer): Promise<TranscriptionResult> {
     this.eventBus.emit('voice:stateChanged', { state: 'processing' });
+    log.debug(`Transcribing audio chunk (${audio.length} bytes)`);
 
     try {
       const result = await this.sttProvider.transcribe(audio);
+      log.info(`Transcription: "${result.text}" (confidence: ${result.confidence})`);
 
       this.eventBus.emit('voice:transcription', {
         text: result.text,
@@ -46,6 +51,9 @@ export class VoiceService {
       });
 
       return result;
+    } catch (error) {
+      log.error(`Transcription failed: ${String(error)}`);
+      throw error;
     } finally {
       this.eventBus.emit('voice:stateChanged', { state: 'idle' });
     }
@@ -87,10 +95,12 @@ export class VoiceService {
         // Cache miss - synthesize
       }
 
+      log.debug(`Synthesizing TTS for voice ${voiceId}`, undefined, agentId);
       const audioBuffer = await this.ttsProvider.synthesize(text, voiceId);
 
       await mkdir(this.audioCacheDir, { recursive: true });
       await writeFile(audioPath, audioBuffer);
+      log.info(`TTS audio cached: ${audioPath}`, undefined, agentId);
 
       this.eventBus.emit('tts:complete', { agentId, audioPath });
       return audioPath;

@@ -1,5 +1,6 @@
 import { app, BrowserWindow } from 'electron';
 import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { EventBus } from '@jam/eventbus';
 import {
   PtyManager,
@@ -8,10 +9,20 @@ import {
   ClaudeCodeRuntime,
   OpenCodeRuntime,
 } from '@jam/agent-runtime';
-import { VoiceService, WhisperSTTProvider, ElevenLabsTTSProvider } from '@jam/voice';
+import {
+  VoiceService,
+  WhisperSTTProvider,
+  ElevenLabsSTTProvider,
+  ElevenLabsTTSProvider,
+  OpenAITTSProvider,
+} from '@jam/voice';
+import type { ISTTProvider, ITTSProvider } from '@jam/core';
+import { createLogger } from '@jam/core';
 import { FileMemoryStore } from '@jam/memory';
 import { AppStore } from './storage/store';
-import { loadConfig, type JamConfig } from './config';
+import { loadConfig, type JamConfig, type STTProviderType, type TTSProviderType } from './config';
+
+const log = createLogger('Orchestrator');
 
 export class Orchestrator {
   readonly eventBus: EventBus;
@@ -59,10 +70,12 @@ export class Orchestrator {
 
     this.eventBus.on('agent:created', (data) => {
       this.mainWindow?.webContents.send('agents:created', data);
+      this.syncAgentNames();
     });
 
     this.eventBus.on('agent:deleted', (data) => {
       this.mainWindow?.webContents.send('agents:deleted', data);
+      this.syncAgentNames();
     });
 
     this.eventBus.on('agent:visualStateChanged', (data) => {
@@ -80,22 +93,25 @@ export class Orchestrator {
       this.mainWindow?.webContents.send('voice:transcription', data);
     });
 
-    this.eventBus.on('tts:complete', (data) => {
-      this.mainWindow?.webContents.send('voice:ttsAudio', data);
+    this.eventBus.on('voice:stateChanged', (data) => {
+      this.mainWindow?.webContents.send('voice:stateChanged', data);
+    });
+
+    // TTS: when AgentManager detects a complete response, synthesize and send audio
+    this.eventBus.on('agent:responseComplete', (data: { agentId: string; text: string }) => {
+      this.handleResponseComplete(data.agentId, data.text);
     });
   }
 
   initVoice(): void {
-    const openaiKey = this.appStore.getApiKey('openai');
-    const elevenlabsKey = this.appStore.getApiKey('elevenlabs');
+    const sttProvider = this.createSTTProvider(this.config.sttProvider);
+    const ttsProvider = this.createTTSProvider(this.config.ttsProvider);
 
-    if (!openaiKey || !elevenlabsKey) {
-      console.warn('[Orchestrator] Voice not initialized: missing API keys');
+    if (!sttProvider || !ttsProvider) {
+      log.warn('Voice not initialized: missing API keys for configured providers');
       return;
     }
 
-    const sttProvider = new WhisperSTTProvider(openaiKey);
-    const ttsProvider = new ElevenLabsTTSProvider(elevenlabsKey);
     const audioCacheDir = join(app.getPath('userData'), 'audio-cache', 'tts');
 
     this.voiceService = new VoiceService({
@@ -105,8 +121,33 @@ export class Orchestrator {
       audioCacheDir,
     });
 
-    // Keep command parser in sync with agent list
+    log.info(`Voice initialized: STT=${this.config.sttProvider}, TTS=${this.config.ttsProvider}`);
     this.syncAgentNames();
+  }
+
+  private createSTTProvider(type: STTProviderType): ISTTProvider | null {
+    const key = this.appStore.getApiKey(type);
+    if (!key) return null;
+
+    const model = this.config.sttModel;
+    switch (type) {
+      case 'openai':
+        return new WhisperSTTProvider(key, model);
+      case 'elevenlabs':
+        return new ElevenLabsSTTProvider(key, model);
+    }
+  }
+
+  private createTTSProvider(type: TTSProviderType): ITTSProvider | null {
+    const key = this.appStore.getApiKey(type);
+    if (!key) return null;
+
+    switch (type) {
+      case 'openai':
+        return new OpenAITTSProvider(key);
+      case 'elevenlabs':
+        return new ElevenLabsTTSProvider(key);
+    }
   }
 
   syncAgentNames(): void {
@@ -119,11 +160,53 @@ export class Orchestrator {
     this.voiceService.updateAgentNames(agents);
   }
 
+  /** Synthesize TTS audio from a completed agent response and send to renderer */
+  private async handleResponseComplete(agentId: string, responseText: string): Promise<void> {
+    if (!this.voiceService) return;
+
+    const agent = this.agentManager.get(agentId);
+    if (!agent) return;
+
+    let text = responseText;
+
+    // Skip trivial output
+    if (!text || text.length < 10) {
+      log.debug(`Skipping TTS: output too short (${text.length} chars)`, undefined, agentId);
+      return;
+    }
+
+    // Truncate for TTS (avoid reading huge code blocks aloud)
+    if (text.length > 1000) text = text.slice(0, 1000) + '...';
+
+    log.debug(`TTS text: "${text.slice(0, 100)}..."`, undefined, agentId);
+
+    try {
+      // Use agent's voice, falling back to global default from config
+      const voiceId = (agent.profile.voice.ttsVoiceId && agent.profile.voice.ttsVoiceId !== 'default')
+        ? agent.profile.voice.ttsVoiceId
+        : this.config.ttsVoice;
+
+      log.info(`Synthesizing TTS (${text.length} chars, voice=${voiceId})`, undefined, agentId);
+      const audioPath = await this.voiceService.synthesize(text, voiceId, agentId);
+
+      // Read audio file and send as base64 data URL to renderer
+      const audioBuffer = await readFile(audioPath);
+      const base64 = audioBuffer.toString('base64');
+      this.mainWindow?.webContents.send('voice:ttsAudio', {
+        agentId,
+        audioData: `data:audio/mpeg;base64,${base64}`,
+      });
+      log.info('TTS audio sent to renderer', undefined, agentId);
+    } catch (error) {
+      log.error(`TTS synthesis failed: ${String(error)}`, undefined, agentId);
+    }
+  }
+
   async startAutoStartAgents(): Promise<void> {
     const agents = this.agentManager.list();
     for (const agent of agents) {
       if (agent.profile.autoStart) {
-        console.log(`[Orchestrator] Auto-starting agent: ${agent.profile.name}`);
+        log.info(`Auto-starting agent: ${agent.profile.name}`, undefined, agent.profile.id);
         await this.agentManager.start(agent.profile.id);
       }
     }

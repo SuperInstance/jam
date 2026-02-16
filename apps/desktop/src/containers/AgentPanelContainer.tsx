@@ -7,7 +7,7 @@ import type { AgentVisualState } from '@/store/agentSlice';
 
 export const AgentPanelContainer: React.FC = () => {
   const agents = useAppStore((s) => Object.values(s.agents));
-  const { selectedAgentId, selectAgent, startAgent, stopAgent, createAgent } =
+  const { selectedAgentId, selectAgent, startAgent, stopAgent, deleteAgent, createAgent } =
     useOrchestrator();
   const [showForm, setShowForm] = useState(false);
 
@@ -19,7 +19,7 @@ export const AgentPanelContainer: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full p-2">
       {showForm ? (
         <AgentConfigForm
           onSubmit={handleCreate}
@@ -40,6 +40,7 @@ export const AgentPanelContainer: React.FC = () => {
                 onClick={() => selectAgent(agent.profile.id)}
                 onStart={() => startAgent(agent.profile.id)}
                 onStop={() => stopAgent(agent.profile.id)}
+                onDelete={() => deleteAgent(agent.profile.id)}
               />
             ))}
           </div>

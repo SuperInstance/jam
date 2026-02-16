@@ -1,11 +1,12 @@
 import type { ISTTProvider, TranscriptionResult, STTOptions } from '@jam/core';
 
-export class WhisperSTTProvider implements ISTTProvider {
-  readonly providerId = 'whisper';
+export class ElevenLabsSTTProvider implements ISTTProvider {
+  readonly providerId = 'elevenlabs';
 
   constructor(
     private apiKey: string,
-    private model: string = 'whisper-1',
+    private model: string = 'scribe_v1',
+    private defaultLanguage: string = 'en',
   ) {}
 
   async transcribe(
@@ -18,26 +19,20 @@ export class WhisperSTTProvider implements ISTTProvider {
       new Blob([new Uint8Array(audio)], { type: 'audio/wav' }),
       'audio.wav',
     );
-    formData.append('model', this.model);
+    formData.append('model_id', this.model);
 
     // Default to English to avoid incorrect language detection
-    const language = options?.language ?? 'en';
+    const language = options?.language ?? this.defaultLanguage;
     if (language) {
-      formData.append('language', language);
+      formData.append('language_code', language);
     }
-
-    if (options?.prompt) {
-      formData.append('prompt', options.prompt);
-    }
-
-    formData.append('response_format', 'verbose_json');
 
     const response = await fetch(
-      'https://api.openai.com/v1/audio/transcriptions',
+      'https://api.elevenlabs.io/v1/speech-to-text',
       {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${this.apiKey}`,
+          'xi-api-key': this.apiKey,
         },
         body: formData,
       },
@@ -45,15 +40,20 @@ export class WhisperSTTProvider implements ISTTProvider {
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`Whisper API error (${response.status}): ${error}`);
+      throw new Error(
+        `ElevenLabs STT API error (${response.status}): ${error}`,
+      );
     }
 
-    const result = (await response.json()) as { text: string; language?: string };
+    const result = (await response.json()) as {
+      text: string;
+      language_code?: string;
+    };
 
     return {
       text: result.text,
       confidence: 1.0,
-      language: result.language,
+      language: result.language_code,
     };
   }
 }

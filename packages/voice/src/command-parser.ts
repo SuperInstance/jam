@@ -28,24 +28,27 @@ export class CommandParser {
   }
 
   parse(transcript: string): ParsedCommand {
-    const cleaned = transcript.trim().toLowerCase();
+    const trimmed = transcript.trim();
+    const cleaned = trimmed.toLowerCase();
 
     // Check for "hey <name>" or "ok <name>" prefix patterns
+    // Match against original-case transcript to preserve command casing
     const addressPatterns = [
       /^(?:hey|hi|ok|yo)\s+(\w+)[,.]?\s*(.*)/i,
       /^(\w+)[,.]?\s+(.*)/i,
     ];
 
     for (const pattern of addressPatterns) {
-      const match = cleaned.match(pattern);
+      const match = trimmed.match(pattern);
       if (match) {
         const possibleName = match[1].toLowerCase();
         if (this.agentNames.has(possibleName)) {
-          const command = match[2].trim() || '';
+          const command = match[2].trim();
 
           return {
             targetAgentName: possibleName,
-            command,
+            // If no explicit command after name, send the whole transcript
+            command: command || trimmed,
             isMetaCommand: false,
           };
         }
@@ -57,7 +60,7 @@ export class CommandParser {
       if (cleaned.startsWith(meta)) {
         return {
           targetAgentName: null,
-          command: transcript.trim(),
+          command: trimmed,
           isMetaCommand: true,
         };
       }
@@ -66,7 +69,7 @@ export class CommandParser {
     // No agent addressed - send to default/active agent
     return {
       targetAgentName: null,
-      command: transcript.trim(),
+      command: trimmed,
       isMetaCommand: false,
     };
   }

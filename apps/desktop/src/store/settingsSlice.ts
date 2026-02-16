@@ -1,7 +1,7 @@
 import type { StateCreator } from 'zustand';
 import type { AppStore } from './index';
 
-export type VoiceMode = 'push-to-talk' | 'toggle';
+export type VoiceMode = 'push-to-talk' | 'always-listening';
 
 export interface SettingsSlice {
   settings: {

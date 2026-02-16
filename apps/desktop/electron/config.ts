@@ -2,17 +2,24 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { app } from 'electron';
 
+export type STTProviderType = 'openai' | 'elevenlabs';
+export type TTSProviderType = 'openai' | 'elevenlabs';
+
 export interface JamConfig {
-  sttProvider: 'whisper' | 'deepgram';
-  ttsProvider: 'elevenlabs' | 'openai';
+  sttProvider: STTProviderType;
+  ttsProvider: TTSProviderType;
+  sttModel: string;
+  ttsVoice: string;
   defaultModel: string;
   defaultRuntime: 'claude-code' | 'opencode';
   theme: 'dark' | 'light';
 }
 
 const DEFAULT_CONFIG: JamConfig = {
-  sttProvider: 'whisper',
-  ttsProvider: 'elevenlabs',
+  sttProvider: 'openai',
+  ttsProvider: 'openai',
+  sttModel: 'whisper-1',
+  ttsVoice: 'alloy',
   defaultModel: 'claude-opus-4-6',
   defaultRuntime: 'claude-code',
   theme: 'dark',

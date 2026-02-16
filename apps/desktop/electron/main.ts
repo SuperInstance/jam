@@ -7,59 +7,67 @@ import {
   nativeImage,
 } from 'electron';
 import path from 'node:path';
+import { execSync } from 'node:child_process';
+import { createLogger, addLogTransport, type LogEntry } from '@jam/core';
 import { Orchestrator } from './orchestrator';
+
+const log = createLogger('Main');
+
+// --- Fix PATH for macOS GUI apps ---
+// Electron apps on macOS don't inherit the shell PATH, so tools like
+// 'claude', 'opencode', etc. won't be found. Resolve the real PATH from
+// the user's login shell at startup.
+function fixPath(): void {
+  if (process.platform !== 'darwin' && process.platform !== 'linux') return;
+
+  try {
+    const shell = process.env.SHELL || '/bin/zsh';
+    // Use login (-l) but NOT interactive (-i) to avoid prompt/compinit noise
+    const result = execSync(`${shell} -lc 'echo -n "$PATH"'`, {
+      encoding: 'utf-8',
+      timeout: 5000,
+    }).trim();
+    if (result && !result.includes('\n')) {
+      process.env.PATH = result;
+    }
+  } catch {
+    // Fallback: append common locations
+  }
+
+  // Always ensure common tool locations are in PATH
+  const extras = [
+    '/usr/local/bin',
+    '/opt/homebrew/bin',
+    `${process.env.HOME}/.local/bin`,
+    `${process.env.HOME}/.cargo/bin`,
+    '/opt/homebrew/sbin',
+  ];
+  const currentPath = process.env.PATH || '';
+  const pathSet = new Set(currentPath.split(':'));
+  const missing = extras.filter((p) => !pathSet.has(p));
+  if (missing.length > 0) {
+    process.env.PATH = `${currentPath}:${missing.join(':')}`;
+  }
+}
+
+fixPath();
+log.debug(`PATH resolved: ${process.env.PATH}`);
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let orchestrator: Orchestrator;
 let isQuitting = false;
 
-// --- Log Buffer (identical to whatsapp-relay pattern) ---
-interface LogEntry {
-  timestamp: string;
-  level: 'info' | 'warn' | 'error';
-  message: string;
-  agentId?: string;
-}
-
+// --- Log Buffer & IPC Transport ---
 const LOG_BUFFER_SIZE = 500;
 const logBuffer: LogEntry[] = [];
 
-function pushLog(
-  level: LogEntry['level'],
-  args: unknown[],
-  agentId?: string,
-): void {
-  const message = args
-    .map((a) => (typeof a === 'string' ? a : JSON.stringify(a)))
-    .join(' ');
-  const entry: LogEntry = {
-    timestamp: new Date().toISOString(),
-    level,
-    message,
-    agentId,
-  };
+// Register a transport that buffers logs and forwards them to the renderer
+addLogTransport((entry: LogEntry) => {
   logBuffer.push(entry);
   if (logBuffer.length > LOG_BUFFER_SIZE) logBuffer.shift();
   mainWindow?.webContents.send('logs:entry', entry);
-}
-
-// Capture console output
-const originalLog = console.log;
-const originalWarn = console.warn;
-const originalError = console.error;
-console.log = (...args) => {
-  originalLog(...args);
-  pushLog('info', args);
-};
-console.warn = (...args) => {
-  originalWarn(...args);
-  pushLog('warn', args);
-};
-console.error = (...args) => {
-  originalError(...args);
-  pushLog('error', args);
-};
+});
 
 // --- Single instance lock ---
 const gotTheLock = app.requestSingleInstanceLock();
@@ -207,18 +215,22 @@ function registerIpcHandlers(): void {
   ipcMain.on(
     'voice:audioChunk',
     async (_, agentId: string, chunk: ArrayBuffer) => {
-      if (!orchestrator.voiceService) return;
+      if (!orchestrator.voiceService) {
+        log.warn('Voice audio received but voice service not initialized');
+        return;
+      }
 
       try {
+        log.debug(`Voice audio chunk received (${chunk.byteLength} bytes) for agent ${agentId}`);
         const result = await orchestrator.voiceService.transcribe(
           Buffer.from(chunk),
         );
 
+        log.info(`Transcribed: "${result.text}" (confidence: ${result.confidence})`);
         const parsed = orchestrator.voiceService.parseCommand(result.text);
 
         if (parsed.isMetaCommand) {
-          // Meta commands handled by orchestrator
-          console.log(`[Voice] Meta command: ${parsed.command}`);
+          log.info(`Voice meta command: ${parsed.command}`);
           return;
         }
 
@@ -228,10 +240,15 @@ function registerIpcHandlers(): void {
           : agentId;
 
         if (targetId && parsed.command) {
-          orchestrator.agentManager.sendInput(targetId, parsed.command);
+          log.info(`Sending voice command to agent ${targetId}: "${parsed.command}"`);
+          // trackResponse: AgentManager will watch PTY output and emit
+          // agent:responseComplete when done — orchestrator handles TTS from there
+          orchestrator.agentManager.sendInput(targetId, parsed.command, { trackResponse: true });
+        } else {
+          log.warn(`Voice command not routed: targetId=${targetId}, command="${parsed.command}"`);
         }
       } catch (error) {
-        console.error('[Voice] Transcription error:', error);
+        log.error(`Voice transcription error: ${String(error)}`);
       }
     },
   );
@@ -247,9 +264,12 @@ function registerIpcHandlers(): void {
       if (!agent) return { success: false, error: 'Agent not found' };
 
       try {
+        const voiceId = (agent.profile.voice.ttsVoiceId && agent.profile.voice.ttsVoiceId !== 'default')
+          ? agent.profile.voice.ttsVoiceId
+          : orchestrator.config.ttsVoice;
         const audioPath = await orchestrator.voiceService.synthesize(
           text,
-          agent.profile.voice.ttsVoiceId,
+          voiceId,
           agentId,
         );
         return { success: true, audioPath };
@@ -276,6 +296,21 @@ function registerIpcHandlers(): void {
   ipcMain.handle('config:get', () => orchestrator.config);
   ipcMain.handle('config:set', (_, config) => {
     Object.assign(orchestrator.config, config);
+    // Re-initialize voice if provider changed
+    orchestrator.initVoice();
+    return { success: true };
+  });
+
+  // API Keys — don't call initVoice() here; config:set always follows and handles it
+  ipcMain.handle('apiKeys:set', (_, service: string, key: string) => {
+    orchestrator.appStore.setApiKey(service, key);
+    return { success: true };
+  });
+  ipcMain.handle('apiKeys:has', (_, service: string) => {
+    return orchestrator.appStore.getApiKey(service) !== null;
+  });
+  ipcMain.handle('apiKeys:delete', (_, service: string) => {
+    orchestrator.appStore.setApiKey(service, '');
     return { success: true };
   });
 
@@ -318,7 +353,7 @@ app.whenReady().then(() => {
   // Auto-start configured agents
   orchestrator.startAutoStartAgents();
 
-  console.log('[Jam] App started successfully');
+  log.info('App started successfully');
 });
 
 app.on('window-all-closed', () => {

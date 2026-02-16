@@ -42,6 +42,11 @@ export interface VoiceStateChangedEvent {
   state: VoiceState;
 }
 
+export interface AgentResponseCompleteEvent {
+  agentId: AgentId;
+  text: string;
+}
+
 export interface TTSCompleteEvent {
   agentId: AgentId;
   audioPath: string;
@@ -54,6 +59,7 @@ export const Events = {
   AGENT_VISUAL_STATE_CHANGED: 'agent:visualStateChanged',
   AGENT_OUTPUT: 'agent:output',
   AGENT_INPUT: 'agent:input',
+  AGENT_RESPONSE_COMPLETE: 'agent:responseComplete',
   VOICE_TRANSCRIPTION: 'voice:transcription',
   VOICE_STATE_CHANGED: 'voice:stateChanged',
   TTS_COMPLETE: 'tts:complete',

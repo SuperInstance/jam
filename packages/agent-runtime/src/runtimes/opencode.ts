@@ -55,6 +55,10 @@ export class OpenCodeRuntime implements IAgentRuntime {
       '',
     );
 
-    return cleaned.trimEnd().endsWith('>') || cleaned.trimEnd().endsWith('$');
+    const lines = cleaned.split('\n');
+    const lastNonEmpty = lines.map((l) => l.trimEnd()).filter((l) => l.length > 0).pop() ?? '';
+
+    return /^[>❯]\s*$/.test(lastNonEmpty)
+      || /[>❯$%#]\s*$/.test(lastNonEmpty);
   }
 }

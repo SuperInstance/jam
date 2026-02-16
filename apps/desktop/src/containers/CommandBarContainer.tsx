@@ -8,10 +8,15 @@ import { TranscriptOverlay } from '@/components/voice/TranscriptOverlay';
 export const CommandBarContainer: React.FC = () => {
   const {
     voiceState,
+    voiceMode,
     transcript,
     isRecording,
+    isListening,
+    audioLevel,
+    setVoiceMode,
     startCapture,
     stopCapture,
+    toggleListening,
   } = useVoice();
   const { sendTextCommand, selectedAgentId } = useOrchestrator();
   const [textInput, setTextInput] = useState('');
@@ -24,6 +29,19 @@ export const CommandBarContainer: React.FC = () => {
     }
   };
 
+  const isPTT = voiceMode === 'push-to-talk';
+  const isVoiceActive = isRecording || isListening;
+
+  const placeholder = !selectedAgentId
+    ? 'Select an agent to start...'
+    : isRecording
+      ? 'Recording...'
+      : isListening
+        ? 'Listening for voice...'
+        : isPTT
+          ? 'Type a command or hold mic to talk...'
+          : 'Type a command or click mic to listen...';
+
   return (
     <div className="border-t border-zinc-800 bg-zinc-900/80 backdrop-blur-sm px-4 py-3 shrink-0">
       <TranscriptOverlay
@@ -33,31 +51,48 @@ export const CommandBarContainer: React.FC = () => {
 
       <div className="flex items-center gap-3">
         <MicButton
+          voiceMode={voiceMode}
           isRecording={isRecording}
+          isListening={isListening}
           isProcessing={voiceState === 'processing'}
           disabled={!selectedAgentId}
           onPressStart={startCapture}
           onPressEnd={stopCapture}
+          onToggleListening={toggleListening}
         />
 
-        <Waveform isActive={isRecording} />
+        <Waveform isActive={isVoiceActive} audioLevel={audioLevel} />
 
         <form onSubmit={handleTextSubmit} className="flex-1">
           <input
             type="text"
             value={textInput}
             onChange={(e) => setTextInput(e.target.value)}
-            placeholder={
-              !selectedAgentId
-                ? 'Select an agent to start...'
-                : isRecording
-                  ? 'Listening...'
-                  : 'Type a command or hold mic to talk...'
-            }
+            placeholder={placeholder}
             disabled={!selectedAgentId || isRecording}
             className="w-full px-4 py-2.5 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500 disabled:opacity-50"
           />
         </form>
+
+        {/* Voice mode toggle */}
+        <button
+          onClick={() => {
+            if (isListening) toggleListening();
+            setVoiceMode(isPTT ? 'always-listening' : 'push-to-talk');
+          }}
+          disabled={!selectedAgentId || isRecording}
+          className={`
+            px-3 py-2 rounded-lg text-xs font-medium transition-colors
+            ${isPTT
+              ? 'bg-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700'
+              : 'bg-blue-900/30 text-blue-300 hover:bg-blue-900/50'
+            }
+            disabled:opacity-50 disabled:cursor-not-allowed
+          `}
+          title={isPTT ? 'Switch to always-listening mode' : 'Switch to push-to-talk mode'}
+        >
+          {isPTT ? 'PTT' : 'VAD'}
+        </button>
       </div>
     </div>
   );

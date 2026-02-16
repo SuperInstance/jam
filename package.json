@@ -7,6 +7,7 @@
     "apps/*"
   ],
   "scripts": {
+    "postinstall": "node scripts/fix-native-modules.js",
     "build": "yarn workspaces foreach -At run build",
     "typecheck": "yarn workspaces foreach -At run typecheck",
     "clean": "yarn workspaces foreach -Ap run clean",

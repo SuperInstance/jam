@@ -7,8 +7,22 @@ import type {
   IEventBus,
   Events,
 } from '@jam/core';
+import { createLogger } from '@jam/core';
 import { PtyManager } from './pty-manager.js';
 import { RuntimeRegistry } from './runtime-registry.js';
+
+const log = createLogger('AgentManager');
+
+/** Max time to wait for a response before giving up on tracking */
+const RESPONSE_TIMEOUT_MS = 60_000;
+/** Max buffer size to prevent memory issues */
+const RESPONSE_MAX_BUFFER = 50_000;
+
+interface ResponseTracking {
+  buffer: string;
+  inputText: string;
+  timeoutTimer: ReturnType<typeof setTimeout>;
+}
 
 export interface AgentStore {
   getProfiles(): AgentProfile[];
@@ -19,6 +33,8 @@ export interface AgentStore {
 export class AgentManager {
   private agents = new Map<AgentId, AgentState>();
   private healthCheckInterval: ReturnType<typeof setInterval> | null = null;
+  /** Tracks in-flight responses for agents that need TTS read-back */
+  private responseTracking = new Map<AgentId, ResponseTracking>();
 
   constructor(
     private ptyManager: PtyManager,
@@ -35,14 +51,24 @@ export class AgentManager {
       });
     }
 
+    log.info(`Restored ${this.store.getProfiles().length} agent profiles`);
+
     // Wire PTY events
     this.ptyManager.onOutput((agentId, data) => {
       this.updateLastActivity(agentId);
       this.eventBus.emit('agent:output', { agentId, data });
+      // Feed into response tracking if active for this agent
+      this.handleResponseOutput(agentId, data);
     });
 
     this.ptyManager.onExit((agentId, exitCode) => {
-      console.log(`[AgentManager] Agent ${agentId} exited with code ${exitCode}`);
+      const state = this.agents.get(agentId);
+      const name = state?.profile.name ?? agentId;
+      if (exitCode === 0) {
+        log.info(`Agent "${name}" exited normally`, undefined, agentId);
+      } else {
+        log.warn(`Agent "${name}" exited with code ${exitCode}`, undefined, agentId);
+      }
       this.updateStatus(agentId, exitCode === 0 ? 'stopped' : 'error');
       this.updateVisualState(agentId, 'offline');
     });
@@ -55,10 +81,9 @@ export class AgentManager {
     const profile: AgentProfile = { ...input, id };
 
     if (!this.runtimeRegistry.has(profile.runtime)) {
-      return {
-        success: false,
-        error: `Unknown runtime: ${profile.runtime}. Available: ${this.runtimeRegistry.list().map((r) => r.runtimeId).join(', ')}`,
-      };
+      const error = `Unknown runtime: ${profile.runtime}. Available: ${this.runtimeRegistry.list().map((r) => r.runtimeId).join(', ')}`;
+      log.error(`Failed to create agent "${input.name}": ${error}`);
+      return { success: false, error };
     }
 
     const state: AgentState = {
@@ -70,6 +95,7 @@ export class AgentManager {
     this.agents.set(id, state);
     this.store.saveProfile(profile);
     this.eventBus.emit('agent:created', { agentId: id, profile });
+    log.info(`Created agent "${profile.name}" (${profile.runtime})`, undefined, id);
 
     return { success: true, agentId: id };
   }
@@ -90,6 +116,12 @@ export class AgentManager {
     this.updateVisualState(agentId, 'idle');
 
     const spawnConfig = runtime.buildSpawnConfig(state.profile);
+    log.info(
+      `Starting agent "${state.profile.name}": ${spawnConfig.command} ${spawnConfig.args.join(' ')}`,
+      { cwd: state.profile.cwd },
+      agentId,
+    );
+
     const result = await this.ptyManager.spawn(agentId, spawnConfig.command, spawnConfig.args, {
       cwd: state.profile.cwd,
       env: { ...spawnConfig.env, ...state.profile.env },
@@ -99,9 +131,11 @@ export class AgentManager {
       state.pid = result.pid;
       state.startedAt = new Date().toISOString();
       this.updateStatus(agentId, 'running');
+      log.info(`Agent "${state.profile.name}" started (PID: ${result.pid})`, undefined, agentId);
     } else {
       this.updateStatus(agentId, 'error');
       this.updateVisualState(agentId, 'error');
+      log.error(`Failed to start agent "${state.profile.name}": ${result.error}`, undefined, agentId);
     }
 
     return result;
@@ -156,14 +190,24 @@ export class AgentManager {
     return { success: true };
   }
 
-  sendInput(agentId: AgentId, text: string): void {
+  sendInput(agentId: AgentId, text: string, options?: { trackResponse?: boolean }): void {
     const state = this.agents.get(agentId);
-    if (!state || state.status !== 'running') return;
+    if (!state || state.status !== 'running') {
+      log.warn(`sendInput ignored: agent ${agentId} status=${state?.status ?? 'not found'}`);
+      return;
+    }
 
     const runtime = this.runtimeRegistry.get(state.profile.runtime);
     if (!runtime) return;
 
     const formatted = runtime.formatInput(text);
+    log.info(`Sending input to "${state.profile.name}": "${formatted.slice(0, 100)}${formatted.length > 100 ? '...' : ''}"`, undefined, agentId);
+
+    // Start response tracking before writing (so we don't miss early output)
+    if (options?.trackResponse) {
+      this.startResponseTracking(agentId, formatted);
+    }
+
     this.ptyManager.write(agentId, formatted + '\n');
     this.updateVisualState(agentId, 'listening');
     this.updateLastActivity(agentId);
@@ -189,9 +233,7 @@ export class AgentManager {
     this.healthCheckInterval = setInterval(() => {
       for (const [agentId, state] of this.agents) {
         if (state.status === 'running' && !this.ptyManager.isRunning(agentId)) {
-          console.warn(
-            `[AgentManager] Agent ${agentId} (${state.profile.name}) PTY died unexpectedly`,
-          );
+          log.error(`Agent "${state.profile.name}" PTY died unexpectedly`, undefined, agentId);
           this.updateStatus(agentId, 'error');
           this.updateVisualState(agentId, 'error');
         }
@@ -228,6 +270,102 @@ export class AgentManager {
 
     state.visualState = visualState;
     this.eventBus.emit('agent:visualStateChanged', { agentId, visualState });
+  }
+
+  // --- Response Tracking ---
+  // When a voice command is sent, we track the agent's output until the runtime
+  // detects the response is complete (e.g. prompt appears). No timers or debounce —
+  // just checking on every PTY output chunk.
+
+  private startResponseTracking(agentId: AgentId, inputText: string): void {
+    // Clean up any existing tracking
+    this.stopResponseTracking(agentId);
+
+    const timeoutTimer = setTimeout(() => {
+      log.warn('Response tracking timed out, emitting what we have', undefined, agentId);
+      this.emitResponseComplete(agentId);
+    }, RESPONSE_TIMEOUT_MS);
+
+    this.responseTracking.set(agentId, { buffer: '', inputText, timeoutTimer });
+    log.debug('Response tracking started', undefined, agentId);
+  }
+
+  private stopResponseTracking(agentId: AgentId): void {
+    const tracking = this.responseTracking.get(agentId);
+    if (tracking) {
+      clearTimeout(tracking.timeoutTimer);
+      this.responseTracking.delete(agentId);
+    }
+  }
+
+  private handleResponseOutput(agentId: AgentId, data: string): void {
+    const tracking = this.responseTracking.get(agentId);
+    if (!tracking) return;
+
+    tracking.buffer += data;
+
+    // Cap buffer to prevent memory issues
+    if (tracking.buffer.length > RESPONSE_MAX_BUFFER) {
+      tracking.buffer = tracking.buffer.slice(-RESPONSE_MAX_BUFFER);
+    }
+
+    // Ask the runtime if the response is complete
+    const state = this.agents.get(agentId);
+    if (!state) return;
+
+    const runtime = this.runtimeRegistry.get(state.profile.runtime);
+    if (!runtime) return;
+
+    // Parse and check: only consider complete if we have meaningful content
+    const parsed = runtime.parseOutput(tracking.buffer);
+    const cleanText = parsed.content.trim();
+
+    if (cleanText.length > 10 && runtime.detectResponseComplete(tracking.buffer)) {
+      log.debug(`Response complete detected (${cleanText.length} chars)`, undefined, agentId);
+      this.emitResponseComplete(agentId);
+    }
+  }
+
+  private emitResponseComplete(agentId: AgentId): void {
+    const tracking = this.responseTracking.get(agentId);
+    if (!tracking) return;
+
+    const text = this.extractResponseText(tracking);
+    this.stopResponseTracking(agentId);
+
+    if (text.length > 0) {
+      this.eventBus.emit('agent:responseComplete', { agentId, text });
+      log.info(`Response complete: ${text.length} chars`, undefined, agentId);
+    } else {
+      log.debug('Response tracking ended with no meaningful content', undefined, agentId);
+    }
+  }
+
+  /** Extract the agent's actual response from the raw terminal buffer.
+   *  Strips: ANSI codes, echoed input, status lines (Thinking...), and prompt. */
+  private extractResponseText(tracking: ResponseTracking): string {
+    // Strip ANSI escape codes
+    // eslint-disable-next-line no-control-regex
+    const cleaned = tracking.buffer.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+
+    const lines = cleaned.split('\n').map((l) => l.trimEnd());
+
+    // Filter out noise: echoed input, status indicators, prompt lines, blanks
+    const inputLower = tracking.inputText.toLowerCase().trim();
+    const filtered = lines.filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return false;
+      // Remove echoed input (PTY echo)
+      if (trimmed.toLowerCase() === inputLower) return false;
+      // Remove common status indicators
+      if (/^(⏳\s*)?thinking\.{0,3}$/i.test(trimmed)) return false;
+      if (/^⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏/.test(trimmed)) return false; // spinner chars
+      // Remove prompt lines
+      if (/^[>❯$%#]\s*$/.test(trimmed)) return false;
+      return true;
+    });
+
+    return filtered.join('\n').trim();
   }
 
   private updateLastActivity(agentId: AgentId): void {

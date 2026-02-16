@@ -1,15 +1,19 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '@/store';
 import { AppShell } from '@/components/layout/AppShell';
-import { Sidebar } from '@/components/layout/Sidebar';
+import { Sidebar, type SidebarTab } from '@/components/layout/Sidebar';
 import { AgentPanelContainer } from '@/containers/AgentPanelContainer';
 import { AgentStageContainer } from '@/containers/AgentStageContainer';
 import { CommandBarContainer } from '@/containers/CommandBarContainer';
+import { SettingsContainer } from '@/containers/SettingsContainer';
+import { LogsContainer } from '@/containers/LogsContainer';
 import type { AgentEntry } from '@/store/agentSlice';
 
 export default function App() {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const sidebarCollapsed = useAppStore((s) => s.settings.sidebarCollapsed);
   const setSidebarCollapsed = useAppStore((s) => s.setSidebarCollapsed);
+  const [activeTab, setActiveTab] = useState<SidebarTab>('agents');
   const setAgents = useAppStore((s) => s.setAgents);
   const addAgent = useAppStore((s) => s.addAgent);
   const removeAgent = useAppStore((s) => s.removeAgent);
@@ -78,6 +82,39 @@ export default function App() {
       },
     );
 
+    // Sync voice state from main process (fixes stuck "processing" mic)
+    const unsubVoiceState = window.jam.voice.onStateChange(
+      ({ state }) => {
+        const s = state as 'idle' | 'capturing' | 'processing' | 'speaking';
+        useAppStore.getState().setVoiceState(s);
+      },
+    );
+
+    // TTS audio playback — play agent responses through the speaker
+    const unsubTTSAudio = window.jam.voice.onTTSAudio(
+      ({ audioData }) => {
+        console.log('[TTS] Audio received, length:', audioData?.length ?? 0);
+        if (!audioData) return;
+        const audio = new Audio(audioData);
+        audioRef.current = audio;
+        useAppStore.getState().setVoiceState('speaking');
+        audio.play().catch((err) => {
+          console.error('[TTS] Failed to play audio:', err);
+          useAppStore.getState().setVoiceState('idle');
+        });
+        audio.onended = () => {
+          console.log('[TTS] Audio playback finished');
+          audioRef.current = null;
+          useAppStore.getState().setVoiceState('idle');
+        };
+        audio.onerror = (err) => {
+          console.error('[TTS] Audio error:', err);
+          audioRef.current = null;
+          useAppStore.getState().setVoiceState('idle');
+        };
+      },
+    );
+
     return () => {
       unsubStatusChange();
       unsubCreated();
@@ -85,6 +122,13 @@ export default function App() {
       unsubVisualState();
       unsubTerminalData();
       unsubTranscription();
+      unsubVoiceState();
+      unsubTTSAudio();
+      // Stop any playing audio on cleanup
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
     };
   }, [
     setAgents,
@@ -97,13 +141,26 @@ export default function App() {
     setAgentActive,
   ]);
 
+  const renderPanel = () => {
+    switch (activeTab) {
+      case 'agents':
+        return <AgentPanelContainer />;
+      case 'settings':
+        return <SettingsContainer onClose={() => setActiveTab('agents')} />;
+      case 'logs':
+        return <LogsContainer />;
+    }
+  };
+
   return (
     <AppShell>
       <Sidebar
         collapsed={sidebarCollapsed}
+        activeTab={activeTab}
         onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
+        onTabChange={setActiveTab}
       >
-        <AgentPanelContainer />
+        {renderPanel()}
       </Sidebar>
 
       <div className="flex-1 flex flex-col min-w-0">

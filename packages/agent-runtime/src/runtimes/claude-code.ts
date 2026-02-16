@@ -60,14 +60,20 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
   }
 
   detectResponseComplete(buffer: string): boolean {
-    // Claude Code shows a prompt character when ready for input
+    // Strip ANSI escape codes for clean analysis
     const cleaned = buffer.replace(
       // eslint-disable-next-line no-control-regex
       /\x1b\[[0-9;]*[a-zA-Z]/g,
       '',
     );
 
-    // Look for the Claude Code prompt indicator
-    return cleaned.trimEnd().endsWith('>') || cleaned.trimEnd().endsWith('$');
+    // Look at the last few non-empty lines for prompt patterns.
+    // Claude Code shows ">" or "❯" when ready for input.
+    const lines = cleaned.split('\n');
+    const lastNonEmpty = lines.map((l) => l.trimEnd()).filter((l) => l.length > 0).pop() ?? '';
+
+    // Match standalone prompt characters or lines ending with prompt chars
+    return /^[>❯]\s*$/.test(lastNonEmpty)
+      || /[>❯$%#]\s*$/.test(lastNonEmpty);
   }
 }
