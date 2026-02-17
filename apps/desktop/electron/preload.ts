@@ -73,6 +73,7 @@ export interface JamAPI {
 
   voice: {
     sendAudioChunk: (agentId: string, chunk: ArrayBuffer) => void;
+    notifyTTSState: (playing: boolean) => void;
     onTranscription: (
       callback: (data: {
         text: string;
@@ -152,6 +153,27 @@ export interface JamAPI {
       agentRuntime?: string;
       agentColor?: string;
     }>;
+    loadHistory: (options?: { agentId?: string; before?: string; limit?: number }) => Promise<{
+      messages: Array<{
+        timestamp: string;
+        role: 'user' | 'agent';
+        content: string;
+        agentId: string;
+        agentName: string;
+        agentRuntime: string;
+        agentColor: string;
+      }>;
+      hasMore: boolean;
+    }>;
+    onAgentAcknowledged: (
+      callback: (data: {
+        agentId: string;
+        agentName: string;
+        agentRuntime: string;
+        agentColor: string;
+        ackText: string;
+      }) => void,
+    ) => () => void;
     onAgentResponse: (
       callback: (data: {
         agentId: string;
@@ -205,6 +227,8 @@ contextBridge.exposeInMainWorld('jam', {
   voice: {
     sendAudioChunk: (agentId, chunk) =>
       ipcRenderer.send('voice:audioChunk', agentId, chunk),
+    notifyTTSState: (playing) =>
+      ipcRenderer.send('voice:ttsState', playing),
     onTranscription: (cb) =>
       createEventListener('voice:transcription', cb),
     onTTSAudio: (cb) => createEventListener('voice:ttsAudio', cb),
@@ -248,6 +272,8 @@ contextBridge.exposeInMainWorld('jam', {
 
   chat: {
     sendCommand: (text) => ipcRenderer.invoke('chat:sendCommand', text),
+    loadHistory: (options) => ipcRenderer.invoke('chat:loadHistory', options),
+    onAgentAcknowledged: (cb) => createEventListener('chat:agentAcknowledged', cb),
     onAgentResponse: (cb) => createEventListener('chat:agentResponse', cb),
     onVoiceCommand: (cb) => createEventListener('chat:voiceCommand', cb),
   },

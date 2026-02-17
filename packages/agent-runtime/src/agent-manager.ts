@@ -1,4 +1,7 @@
 import { v4 as uuid } from 'uuid';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { mkdirSync } from 'node:fs';
 import type {
   AgentId,
   AgentProfile,
@@ -9,8 +12,22 @@ import type {
 import { createLogger } from '@jam/core';
 import { PtyManager } from './pty-manager.js';
 import { RuntimeRegistry } from './runtime-registry.js';
+import { AgentContextBuilder } from './agent-context-builder.js';
 
 const log = createLogger('AgentManager');
+
+const ACK_PHRASES = [
+  'On it!',
+  'Got it, working on that now.',
+  'Sure, let me check.',
+  'Looking into it.',
+  'Right away!',
+  'Working on it.',
+];
+
+function pickAckPhrase(): string {
+  return ACK_PHRASES[Math.floor(Math.random() * ACK_PHRASES.length)];
+}
 
 export interface AgentStore {
   getProfiles(): AgentProfile[];
@@ -23,6 +40,7 @@ export class AgentManager {
   private healthCheckInterval: ReturnType<typeof setInterval> | null = null;
   /** Session IDs per agent for voice command conversation continuity */
   private voiceSessions = new Map<AgentId, string>();
+  private contextBuilder = new AgentContextBuilder();
 
   constructor(
     private ptyManager: PtyManager,
@@ -72,6 +90,25 @@ export class AgentManager {
       return { success: false, error };
     }
 
+    // Default cwd to ~/.jam/agents/[agent-name] and ensure the directory exists
+    if (!profile.cwd) {
+      const sanitized = profile.name.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
+      profile.cwd = join(homedir(), '.jam', 'agents', sanitized);
+    }
+    try {
+      mkdirSync(profile.cwd, { recursive: true });
+    } catch (err) {
+      log.warn(`Could not create agent directory "${profile.cwd}": ${String(err)}`, undefined, id);
+    }
+
+    // Initialize SOUL.md and skills directory (fire-and-forget)
+    this.contextBuilder.initializeSoul(profile.cwd, profile).catch(err =>
+      log.warn(`Failed to initialize SOUL.md: ${String(err)}`, undefined, id)
+    );
+    this.contextBuilder.initializeSkillsDir(profile.cwd).catch(err =>
+      log.warn(`Failed to initialize skills dir: ${String(err)}`, undefined, id)
+    );
+
     const state: AgentState = {
       profile,
       status: 'stopped',
@@ -81,7 +118,7 @@ export class AgentManager {
     this.agents.set(id, state);
     this.store.saveProfile(profile);
     this.eventBus.emit('agent:created', { agentId: id, profile });
-    log.info(`Created agent "${profile.name}" (${profile.runtime})`, undefined, id);
+    log.info(`Created agent "${profile.name}" (${profile.runtime}), cwd: ${profile.cwd}`, undefined, id);
 
     return { success: true, agentId: id };
   }
@@ -209,7 +246,20 @@ export class AgentManager {
 
     this.updateVisualState(agentId, 'thinking');
 
-    const result = await runtime.execute(state.profile, text, {
+    // Emit acknowledgment immediately — gives instant voice + visual feedback
+    const ackText = pickAckPhrase();
+    this.eventBus.emit('agent:acknowledged', {
+      agentId,
+      agentName: state.profile.name,
+      agentRuntime: state.profile.runtime,
+      agentColor: state.profile.color,
+      ackText,
+    });
+
+    // Enrich profile with SOUL.md, conversation history, and matched skills
+    const enrichedProfile = await this.contextBuilder.buildContext(state.profile, text);
+
+    const result = await runtime.execute(enrichedProfile, text, {
       sessionId,
       cwd: state.profile.cwd,
     });
@@ -229,6 +279,19 @@ export class AgentManager {
       log.debug(`Voice session stored: ${result.sessionId}`, undefined, agentId);
     }
 
+    // Record conversation for cross-session memory (fire-and-forget)
+    if (state.profile.cwd) {
+      const ts = new Date().toISOString();
+      this.contextBuilder.recordConversation(state.profile.cwd, {
+        timestamp: ts, role: 'user', content: text,
+      }).catch(() => {});
+      if (result.text) {
+        this.contextBuilder.recordConversation(state.profile.cwd, {
+          timestamp: ts, role: 'agent', content: result.text,
+        }).catch(() => {});
+      }
+    }
+
     // Echo the conversation into the terminal view
     if (result.text.length > 0) {
       const name = state.profile.name || 'Agent';
@@ -246,6 +309,83 @@ export class AgentManager {
     }
 
     return { success: true, text: result.text };
+  }
+
+  /** Load conversation history across all (or one) agent(s), merged and sorted chronologically.
+   *  Supports cursor-based pagination for infinite scrolling.
+   *  Pass agentId to load for a single agent only. */
+  async loadConversationHistory(options?: {
+    agentId?: string;
+    before?: string;
+    limit?: number;
+  }): Promise<{
+    messages: Array<{
+      timestamp: string;
+      role: 'user' | 'agent';
+      content: string;
+      agentId: string;
+      agentName: string;
+      agentRuntime: string;
+      agentColor: string;
+    }>;
+    hasMore: boolean;
+  }> {
+    const limit = options?.limit ?? 50;
+    const before = options?.before;
+    const filterAgentId = options?.agentId;
+
+    // Collect conversation entries from target agent(s) in parallel
+    const agentEntries = await Promise.all(
+      Array.from(this.agents.values())
+        .filter(state => state.profile.cwd && (!filterAgentId || state.profile.id === filterAgentId))
+        .map(async (state) => {
+          const result = await this.contextBuilder.loadPaginatedConversations(
+            state.profile.cwd!,
+            { before, limit },
+          );
+          return {
+            profile: state.profile,
+            entries: result.entries,
+            hasMore: result.hasMore,
+          };
+        }),
+    );
+
+    // Merge all entries with agent metadata
+    type EnrichedEntry = {
+      timestamp: string;
+      role: 'user' | 'agent';
+      content: string;
+      agentId: string;
+      agentName: string;
+      agentRuntime: string;
+      agentColor: string;
+    };
+
+    const merged: EnrichedEntry[] = [];
+    let anyHasMore = false;
+
+    for (const { profile, entries, hasMore } of agentEntries) {
+      if (hasMore) anyHasMore = true;
+      for (const entry of entries) {
+        merged.push({
+          timestamp: entry.timestamp,
+          role: entry.role,
+          content: entry.content,
+          agentId: profile.id,
+          agentName: profile.name,
+          agentRuntime: profile.runtime,
+          agentColor: profile.color ?? '#6b7280',
+        });
+      }
+    }
+
+    // Sort chronologically and take the last `limit` entries
+    merged.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    const page = merged.slice(-limit);
+    const hasMore = anyHasMore || merged.length > limit;
+
+    return { messages: page, hasMore };
   }
 
   get(agentId: AgentId): AgentState | undefined {

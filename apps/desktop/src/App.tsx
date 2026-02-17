@@ -13,18 +13,47 @@ import type { ChatMessage } from '@/store/chatSlice';
 
 // --- TTS Audio Queue ---
 // Prevents agents from talking over each other by playing responses sequentially.
+// Supports interruption via custom 'jam:interrupt-tts' DOM event (fired when user starts speaking).
 const ttsQueue: string[] = [];
 let ttsPlaying = false;
+let currentAudio: HTMLAudioElement | null = null;
+let currentBlobUrl: string | null = null;
 
 function enqueueTTSAudio(audioData: string) {
   ttsQueue.push(audioData);
   if (!ttsPlaying) playNextTTS();
 }
 
+/** Stop current playback and discard all queued TTS audio */
+function interruptTTS() {
+  ttsQueue.length = 0;
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.onended = null;
+    currentAudio.onerror = null;
+    currentAudio = null;
+  }
+  if (currentBlobUrl) {
+    URL.revokeObjectURL(currentBlobUrl);
+    currentBlobUrl = null;
+  }
+  ttsPlaying = false;
+  useAppStore.getState().setVoiceState('idle');
+  // Notify main process that TTS stopped — unblocks voice input
+  window.jam.voice.notifyTTSState(false);
+}
+
+// Listen for interrupt signal from useVoice (user started speaking)
+window.addEventListener('jam:interrupt-tts', interruptTTS);
+
 function playNextTTS() {
   if (ttsQueue.length === 0) {
     ttsPlaying = false;
+    currentAudio = null;
+    currentBlobUrl = null;
     useAppStore.getState().setVoiceState('idle');
+    // Notify main process TTS finished — unblocks voice input
+    window.jam.voice.notifyTTSState(false);
     return;
   }
 
@@ -34,7 +63,6 @@ function playNextTTS() {
   try {
     const match = audioData.match(/^data:([^;]+);base64,(.+)$/);
     let audioSrc: string;
-    let blobUrl: string | null = null;
 
     if (match) {
       const mimeType = match[1];
@@ -45,33 +73,42 @@ function playNextTTS() {
         bytes[i] = binaryString.charCodeAt(i);
       }
       const blob = new Blob([bytes], { type: mimeType });
-      blobUrl = URL.createObjectURL(blob);
-      audioSrc = blobUrl;
+      currentBlobUrl = URL.createObjectURL(blob);
+      audioSrc = currentBlobUrl;
     } else {
+      currentBlobUrl = null;
       audioSrc = audioData;
     }
 
     const audio = new Audio(audioSrc);
+    currentAudio = audio;
     useAppStore.getState().setVoiceState('speaking');
+    // Notify main process TTS is playing — suppresses mic feedback
+    window.jam.voice.notifyTTSState(true);
 
     audio.play().catch((err) => {
       console.error('[TTS] Failed to play audio:', err);
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      if (currentBlobUrl) { URL.revokeObjectURL(currentBlobUrl); currentBlobUrl = null; }
+      currentAudio = null;
       playNextTTS();
     });
 
     audio.onended = () => {
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      if (currentBlobUrl) { URL.revokeObjectURL(currentBlobUrl); currentBlobUrl = null; }
+      currentAudio = null;
       playNextTTS();
     };
 
     audio.onerror = (err) => {
       console.error('[TTS] Audio error:', err);
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      if (currentBlobUrl) { URL.revokeObjectURL(currentBlobUrl); currentBlobUrl = null; }
+      currentAudio = null;
       playNextTTS();
     };
   } catch (err) {
     console.error('[TTS] Audio setup error:', err);
+    currentAudio = null;
+    currentBlobUrl = null;
     playNextTTS();
   }
 }
@@ -94,7 +131,7 @@ export default function App() {
 
   // Initialize: load agents from main process and set up event listeners
   useEffect(() => {
-    // Load initial agent list
+    // Load initial agent list, then load conversation history
     window.jam.agents.list().then((agents) => {
       setAgents(agents as AgentEntry[]);
       // Mark running agents as active
@@ -102,6 +139,35 @@ export default function App() {
         if (agent.status === 'running') {
           setAgentActive(agent.profile.id as string, true);
         }
+      }
+
+      // Load conversation history from JSONL files (runs regardless of viewMode)
+      const store = useAppStore.getState();
+      if (!store.historyLoaded) {
+        store.setIsLoadingHistory(true);
+        window.jam.chat.loadHistory({ limit: 50 }).then((result) => {
+          if (result.messages.length > 0) {
+            const chatMessages: ChatMessage[] = result.messages.map((m) => ({
+              id: `history-${m.timestamp}-${m.agentId}-${m.role}`,
+              role: m.role === 'user' ? 'user' as const : 'agent' as const,
+              agentId: m.agentId,
+              agentName: m.agentName,
+              agentRuntime: m.agentRuntime,
+              agentColor: m.agentColor,
+              content: m.content,
+              status: 'complete' as const,
+              source: 'voice' as const,
+              timestamp: new Date(m.timestamp).getTime(),
+            }));
+            useAppStore.getState().prependMessages(chatMessages);
+          }
+          useAppStore.getState().setHasMoreHistory(result.hasMore);
+          useAppStore.getState().setIsLoadingHistory(false);
+          useAppStore.getState().setHistoryLoaded(true);
+        }).catch(() => {
+          useAppStore.getState().setIsLoadingHistory(false);
+          useAppStore.getState().setHistoryLoaded(true);
+        });
       }
     });
 
@@ -168,6 +234,25 @@ export default function App() {
       },
     );
 
+    // Chat: agent acknowledged — immediate feedback before execute() starts
+    const unsubAcknowledged = window.jam.chat.onAgentAcknowledged(
+      ({ agentId, agentName, agentRuntime, agentColor, ackText }) => {
+        const msg: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: 'agent',
+          agentId,
+          agentName,
+          agentRuntime,
+          agentColor,
+          content: ackText,
+          status: 'complete',
+          source: 'text',
+          timestamp: Date.now(),
+        };
+        useAppStore.getState().addMessage(msg);
+      },
+    );
+
     // Chat: voice command user messages (from main process voice handler)
     const unsubVoiceCommand = window.jam.chat.onVoiceCommand(
       ({ text, agentId, agentName }) => {
@@ -215,6 +300,7 @@ export default function App() {
       unsubTranscription();
       unsubVoiceState();
       unsubTTSAudio();
+      unsubAcknowledged();
       unsubVoiceCommand();
       unsubAgentResponse();
       // Stop any playing audio on cleanup

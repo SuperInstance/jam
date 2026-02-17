@@ -39,12 +39,11 @@ export function useOrchestrator() {
   }, []);
 
   const sendTextCommand = useCallback(async (text: string) => {
-    const { addMessage, updateMessage, setIsProcessing } = useAppStore.getState();
+    const { addMessage, setIsProcessing } = useAppStore.getState();
 
     // Add user message to chat
-    const userMsgId = crypto.randomUUID();
     const userMsg: ChatMessage = {
-      id: userMsgId,
+      id: crypto.randomUUID(),
       role: 'user',
       agentId: null,
       agentName: null,
@@ -57,47 +56,54 @@ export function useOrchestrator() {
     };
     addMessage(userMsg);
 
-    // Add placeholder agent response
-    const agentMsgId = crypto.randomUUID();
-    const agentMsg: ChatMessage = {
-      id: agentMsgId,
-      role: 'agent',
-      agentId: null,
-      agentName: null,
-      agentRuntime: null,
-      agentColor: null,
-      content: '',
-      status: 'sending',
-      source: 'text',
-      timestamp: Date.now(),
-    };
-    addMessage(agentMsg);
-
+    // No placeholder needed — the agent:acknowledged event provides
+    // immediate feedback (ack message + TTS) before execute() starts.
     setIsProcessing(true);
 
     try {
       const result = await window.jam.chat.sendCommand(text);
 
+      // Add full agent response (ack message was already shown via event)
       if (result.success) {
-        updateMessage(agentMsgId, {
+        addMessage({
+          id: crypto.randomUUID(),
+          role: 'agent',
           agentId: result.agentId ?? null,
           agentName: result.agentName ?? null,
           agentRuntime: result.agentRuntime ?? null,
           agentColor: result.agentColor ?? null,
           content: result.text ?? '',
           status: 'complete',
+          source: 'text',
+          timestamp: Date.now(),
         });
       } else {
-        updateMessage(agentMsgId, {
+        addMessage({
+          id: crypto.randomUUID(),
+          role: 'agent',
+          agentId: null,
+          agentName: null,
+          agentRuntime: null,
+          agentColor: null,
           content: result.error ?? 'Command failed',
           status: 'error',
+          source: 'text',
+          timestamp: Date.now(),
           error: result.error,
         });
       }
     } catch (err) {
-      updateMessage(agentMsgId, {
+      addMessage({
+        id: crypto.randomUUID(),
+        role: 'agent',
+        agentId: null,
+        agentName: null,
+        agentRuntime: null,
+        agentColor: null,
         content: String(err),
         status: 'error',
+        source: 'text',
+        timestamp: Date.now(),
         error: String(err),
       });
     } finally {
@@ -110,7 +116,7 @@ export function useOrchestrator() {
   }, []);
 
   const selectAgent = useCallback(
-    (agentId: string) => {
+    (agentId: string | null) => {
       setSelectedAgent(agentId);
     },
     [setSelectedAgent],

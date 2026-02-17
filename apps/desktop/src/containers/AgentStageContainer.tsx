@@ -2,7 +2,7 @@ import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useAppStore } from '@/store';
 import { AgentAvatarContainer } from './AgentAvatarContainer';
-import { AgentTerminalContainer } from './AgentTerminalContainer';
+import { AgentChatContainer } from './AgentChatContainer';
 
 export const AgentStageContainer: React.FC = () => {
   const activeAgentIds = useAppStore((s) => s.activeAgentIds);
@@ -56,9 +56,9 @@ export const AgentStageContainer: React.FC = () => {
               <AgentAvatarContainer agentId={agentId} />
             </div>
 
-            {/* Terminal */}
+            {/* Per-agent chat */}
             <div className="flex-1 min-h-[200px]">
-              <AgentTerminalContainer agentId={agentId} />
+              <AgentChatContainer agentId={agentId} />
             </div>
           </motion.div>
         ))}

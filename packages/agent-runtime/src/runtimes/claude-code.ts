@@ -171,13 +171,10 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
     return args;
   }
 
-  /** Compose a system prompt that includes agent identity */
+  /** Compose a system prompt — uses enriched prompt directly if present (from AgentContextBuilder) */
   private buildSystemPrompt(profile: AgentProfile): string {
-    const identity = `Your name is ${profile.name}. When asked who you are, respond as ${profile.name}.`;
-    if (profile.systemPrompt) {
-      return `${identity}\n\n${profile.systemPrompt}`;
-    }
-    return identity;
+    if (profile.systemPrompt) return profile.systemPrompt;
+    return `Your name is ${profile.name}. When asked who you are, respond as ${profile.name}.`;
   }
 
   /** Parse JSON output from `claude -p --output-format json` */

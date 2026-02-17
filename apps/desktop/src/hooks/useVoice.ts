@@ -45,6 +45,9 @@ export function useVoice() {
     const stream = streamRef.current;
     if (!stream || isRecordingRef.current) return;
 
+    // Interrupt any playing TTS — user is speaking, agent should stop
+    window.dispatchEvent(new Event('jam:interrupt-tts'));
+
     chunksRef.current = [];
 
     const mediaRecorder = new MediaRecorder(stream, {

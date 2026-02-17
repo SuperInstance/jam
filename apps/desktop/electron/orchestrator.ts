@@ -25,6 +25,22 @@ import { loadConfig, type JamConfig, type STTProviderType, type TTSProviderType 
 
 const log = createLogger('Orchestrator');
 
+const DEATH_PHRASES = [
+  '{name} has left the building. Permanently.',
+  '{name} just rage-quit. Classic.',
+  'Uh oh. {name} is taking an unscheduled nap.',
+  '{name} has entered the shadow realm.',
+  'Well... {name} is no more. Rest in pixels.',
+  '{name} has crashed. Sending thoughts and prayers.',
+  'Plot twist: {name} is dead.',
+  '{name} just spontaneously combusted. Awkward.',
+];
+
+function pickDeathPhrase(name: string): string {
+  const phrase = DEATH_PHRASES[Math.floor(Math.random() * DEATH_PHRASES.length)];
+  return phrase.replace(/{name}/g, name);
+}
+
 export class Orchestrator {
   readonly eventBus: EventBus;
   readonly ptyManager: PtyManager;
@@ -63,41 +79,76 @@ export class Orchestrator {
     this.memoryStore = new FileMemoryStore(agentsDir);
   }
 
+  /** Safely send IPC to renderer — guards against destroyed window during HMR */
+  private sendToRenderer(channel: string, data: unknown): void {
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      try {
+        this.mainWindow.webContents.send(channel, data);
+      } catch {
+        // Window may have been destroyed between check and send (race during HMR)
+      }
+    }
+  }
+
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win;
 
     // Forward events to renderer
-    this.eventBus.on('agent:statusChanged', (data) => {
-      this.mainWindow?.webContents.send('agents:statusChange', data);
+    this.eventBus.on('agent:statusChanged', (data: {
+      agentId: string;
+      status: string;
+      previousStatus: string;
+    }) => {
+      this.sendToRenderer('agents:statusChange', data);
+
+      // Agent died unexpectedly — notify with a funny voice message
+      if (data.status === 'error') {
+        this.speakAgentDeath(data.agentId);
+      }
     });
 
     this.eventBus.on('agent:created', (data) => {
-      this.mainWindow?.webContents.send('agents:created', data);
+      this.sendToRenderer('agents:created', data);
       this.syncAgentNames();
     });
 
     this.eventBus.on('agent:deleted', (data) => {
-      this.mainWindow?.webContents.send('agents:deleted', data);
+      this.sendToRenderer('agents:deleted', data);
       this.syncAgentNames();
     });
 
     this.eventBus.on('agent:visualStateChanged', (data) => {
-      this.mainWindow?.webContents.send('agents:visualStateChange', data);
+      this.sendToRenderer('agents:visualStateChange', data);
     });
 
     this.eventBus.on('agent:output', (data: { agentId: string; data: string }) => {
-      this.mainWindow?.webContents.send('terminal:data', {
+      this.sendToRenderer('terminal:data', {
         agentId: data.agentId,
         output: data.data,
       });
     });
 
     this.eventBus.on('voice:transcription', (data) => {
-      this.mainWindow?.webContents.send('voice:transcription', data);
+      this.sendToRenderer('voice:transcription', data);
     });
 
     this.eventBus.on('voice:stateChanged', (data) => {
-      this.mainWindow?.webContents.send('voice:stateChanged', data);
+      this.sendToRenderer('voice:stateChanged', data);
+    });
+
+    // Agent acknowledged — immediate feedback before execute() starts
+    this.eventBus.on('agent:acknowledged', (data: {
+      agentId: string;
+      agentName: string;
+      agentRuntime: string;
+      agentColor: string;
+      ackText: string;
+    }) => {
+      // Forward to renderer for chat UI
+      this.sendToRenderer('chat:agentAcknowledged', data);
+
+      // Speak the ack phrase via TTS (short, immediate feedback)
+      this.speakAck(data.agentId, data.ackText);
     });
 
     // TTS: when AgentManager detects a complete response, synthesize and send audio
@@ -168,6 +219,82 @@ export class Orchestrator {
     }
   }
 
+  /** Speak a short acknowledgment phrase — bypasses length check and markdown stripping */
+  private async speakAck(agentId: string, ackText: string): Promise<void> {
+    if (!this.voiceService) return;
+
+    const agent = this.agentManager.get(agentId);
+    if (!agent) return;
+
+    try {
+      const voiceId = this.resolveVoiceId(agent);
+      log.info(`TTS ack: "${ackText}" (voice=${voiceId})`, undefined, agentId);
+      const audioPath = await this.voiceService.synthesize(ackText, voiceId, agentId);
+
+      const audioBuffer = await readFile(audioPath);
+      const base64 = audioBuffer.toString('base64');
+      this.sendToRenderer('voice:ttsAudio', {
+        agentId,
+        audioData: `data:audio/mpeg;base64,${base64}`,
+      });
+    } catch (error) {
+      log.error(`TTS ack failed: ${String(error)}`, undefined, agentId);
+    }
+  }
+
+  /** Speak a funny death notification when an agent crashes */
+  private async speakAgentDeath(agentId: string): Promise<void> {
+    const agent = this.agentManager.get(agentId);
+    const name = agent?.profile.name ?? 'Unknown Agent';
+    const deathPhrase = pickDeathPhrase(name);
+
+    log.info(`Agent death notification: "${deathPhrase}"`, undefined, agentId);
+
+    // Show death message in chat UI
+    this.sendToRenderer('chat:agentAcknowledged', {
+      agentId,
+      agentName: name,
+      agentRuntime: agent?.profile.runtime ?? '',
+      agentColor: agent?.profile.color ?? '#6b7280',
+      ackText: deathPhrase,
+    });
+
+    // Speak the death phrase via TTS
+    if (!this.voiceService || !agent) return;
+
+    try {
+      const voiceId = this.resolveVoiceId(agent);
+      const audioPath = await this.voiceService.synthesize(deathPhrase, voiceId, agentId);
+
+      const audioBuffer = await readFile(audioPath);
+      const base64 = audioBuffer.toString('base64');
+      this.sendToRenderer('voice:ttsAudio', {
+        agentId,
+        audioData: `data:audio/mpeg;base64,${base64}`,
+      });
+    } catch (error) {
+      log.error(`TTS death notification failed: ${String(error)}`, undefined, agentId);
+    }
+  }
+
+  /** Resolve the TTS voice ID for an agent, handling provider compatibility */
+  private resolveVoiceId(agent: { profile: { voice: { ttsVoiceId: string } } }): string {
+    const OPENAI_VOICES = new Set(['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer']);
+    const isOpenAI = this.config.ttsProvider === 'openai';
+    const agentVoice = agent.profile.voice.ttsVoiceId;
+
+    if (agentVoice && agentVoice !== 'default') {
+      const voiceIsOpenAI = OPENAI_VOICES.has(agentVoice);
+      if (isOpenAI && !voiceIsOpenAI) {
+        return OPENAI_VOICES.has(this.config.ttsVoice) ? this.config.ttsVoice : 'alloy';
+      } else if (!isOpenAI && voiceIsOpenAI) {
+        return this.config.ttsVoice;
+      }
+      return agentVoice;
+    }
+    return this.config.ttsVoice;
+  }
+
   /** Synthesize TTS audio from a completed agent response and send to renderer */
   private async handleResponseComplete(agentId: string, responseText: string): Promise<void> {
     if (!this.voiceService) return;
@@ -192,48 +319,17 @@ export class Orchestrator {
     log.debug(`TTS text: "${text.slice(0, 100)}..."`, undefined, agentId);
 
     try {
-      // Resolve voice ID — ensure it's compatible with the active TTS provider.
-      // OpenAI voices are short names (alloy, nova, etc.), ElevenLabs are long hex IDs.
-      const OPENAI_VOICES = new Set(['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer']);
-      const isOpenAI = this.config.ttsProvider === 'openai';
-      const agentVoice = agent.profile.voice.ttsVoiceId;
-      let voiceId: string;
-
-      if (agentVoice && agentVoice !== 'default') {
-        // Check if the stored voice is compatible with the current provider
-        const voiceIsOpenAI = OPENAI_VOICES.has(agentVoice);
-        if (isOpenAI && !voiceIsOpenAI) {
-          // Agent has ElevenLabs voice but TTS is now OpenAI — use global default
-          voiceId = OPENAI_VOICES.has(this.config.ttsVoice) ? this.config.ttsVoice : 'alloy';
-          log.warn(`Agent voice "${agentVoice}" incompatible with OpenAI TTS, using "${voiceId}"`, undefined, agentId);
-        } else if (!isOpenAI && voiceIsOpenAI) {
-          // Agent has OpenAI voice but TTS is now ElevenLabs — use global default
-          voiceId = this.config.ttsVoice;
-          log.warn(`Agent voice "${agentVoice}" incompatible with ElevenLabs TTS, using "${voiceId}"`, undefined, agentId);
-        } else {
-          voiceId = agentVoice;
-        }
-      } else {
-        voiceId = this.config.ttsVoice;
-      }
+      const voiceId = this.resolveVoiceId(agent);
 
       log.info(`Synthesizing TTS (${text.length} chars, voice=${voiceId})`, undefined, agentId);
       const audioPath = await this.voiceService.synthesize(text, voiceId, agentId);
 
-      // Guard: ensure mainWindow is alive before sending
-      if (!this.mainWindow || this.mainWindow.isDestroyed()) {
-        log.error('Cannot send TTS audio: main window unavailable', undefined, agentId);
-        return;
-      }
-
-      // Read audio file and send as base64 data URL to renderer
       const audioBuffer = await readFile(audioPath);
       const base64 = audioBuffer.toString('base64');
-      const dataUrl = `data:audio/mpeg;base64,${base64}`;
       log.info(`Sending TTS audio to renderer (${Math.round(audioBuffer.length / 1024)}KB)`, undefined, agentId);
-      this.mainWindow.webContents.send('voice:ttsAudio', {
+      this.sendToRenderer('voice:ttsAudio', {
         agentId,
-        audioData: dataUrl,
+        audioData: `data:audio/mpeg;base64,${base64}`,
       });
     } catch (error) {
       log.error(`TTS synthesis failed: ${String(error)}`, undefined, agentId);

@@ -21,11 +21,18 @@ export interface ChatMessage {
 export interface ChatSlice {
   messages: ChatMessage[];
   isProcessing: boolean;
+  isLoadingHistory: boolean;
+  hasMoreHistory: boolean;
+  historyLoaded: boolean;
 
   addMessage: (msg: ChatMessage) => void;
+  prependMessages: (msgs: ChatMessage[]) => void;
   updateMessage: (id: string, updates: Partial<ChatMessage>) => void;
   clearMessages: () => void;
   setIsProcessing: (v: boolean) => void;
+  setIsLoadingHistory: (v: boolean) => void;
+  setHasMoreHistory: (v: boolean) => void;
+  setHistoryLoaded: (v: boolean) => void;
 }
 
 export const createChatSlice: StateCreator<
@@ -36,11 +43,20 @@ export const createChatSlice: StateCreator<
 > = (set) => ({
   messages: [],
   isProcessing: false,
+  isLoadingHistory: false,
+  hasMoreHistory: true,
+  historyLoaded: false,
 
   addMessage: (msg) =>
     set((state) => ({
       ...state,
       messages: [...state.messages, msg],
+    })),
+
+  prependMessages: (msgs) =>
+    set((state) => ({
+      ...state,
+      messages: [...msgs, ...state.messages],
     })),
 
   updateMessage: (id, updates) =>
@@ -52,8 +68,17 @@ export const createChatSlice: StateCreator<
     })),
 
   clearMessages: () =>
-    set((state) => ({ ...state, messages: [] })),
+    set((state) => ({ ...state, messages: [], hasMoreHistory: true, historyLoaded: false })),
 
   setIsProcessing: (isProcessing) =>
     set((state) => ({ ...state, isProcessing })),
+
+  setIsLoadingHistory: (isLoadingHistory) =>
+    set((state) => ({ ...state, isLoadingHistory })),
+
+  setHasMoreHistory: (hasMoreHistory) =>
+    set((state) => ({ ...state, hasMoreHistory })),
+
+  setHistoryLoaded: (historyLoaded) =>
+    set((state) => ({ ...state, historyLoaded })),
 });

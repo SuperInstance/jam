@@ -67,7 +67,9 @@ const logBuffer: LogEntry[] = [];
 addLogTransport((entry: LogEntry) => {
   logBuffer.push(entry);
   if (logBuffer.length > LOG_BUFFER_SIZE) logBuffer.shift();
-  mainWindow?.webContents.send('logs:entry', entry);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('logs:entry', entry);
+  }
 });
 
 // --- Single instance lock ---
@@ -214,12 +216,28 @@ function registerIpcHandlers(): void {
 
   // Voice — routing is purely name-based (not driven by UI selection)
   let lastVoiceTargetId: string | null = null;
+  const voiceCommandsInFlight = new Set<string>(); // per-agent guard
+  let ttsSpeaking = false;
+
+  // TTS playback state is driven by the renderer (which actually plays audio).
+  // The renderer calls voice:ttsState(true) when audio starts, false when it
+  // finishes or is interrupted by the user speaking.
+  ipcMain.on('voice:ttsState', (_, playing: boolean) => {
+    ttsSpeaking = playing;
+    log.debug(`TTS state from renderer: ${playing ? 'speaking' : 'idle'}`);
+  });
 
   ipcMain.on(
     'voice:audioChunk',
     async (_, _agentId: string, chunk: ArrayBuffer) => {
       if (!orchestrator.voiceService) {
         log.warn('Voice audio received but voice service not initialized');
+        return;
+      }
+
+      // Guard: skip if TTS is playing (prevents mic feedback loop in VAD mode)
+      if (ttsSpeaking) {
+        log.debug('Voice audio ignored: TTS is speaking');
         return;
       }
 
@@ -273,20 +291,29 @@ function registerIpcHandlers(): void {
         }
 
         if (targetId && parsed.command) {
+          // Per-agent guard: skip if this agent already has a command in flight
+          if (voiceCommandsInFlight.has(targetId)) {
+            log.debug(`Voice audio ignored: command already in flight for ${targetId}`);
+            return;
+          }
+
+          voiceCommandsInFlight.add(targetId);
           lastVoiceTargetId = targetId;
           const agent = orchestrator.agentManager.get(targetId);
           log.info(`Voice → "${agent?.profile.name ?? targetId}": "${parsed.command}"`);
 
           // Notify renderer of the voice user message for the chat UI
-          mainWindow?.webContents.send('chat:voiceCommand', {
-            text: parsed.command,
-            agentId: targetId,
-            agentName: agent?.profile.name ?? null,
-          });
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('chat:voiceCommand', {
+              text: parsed.command,
+              agentId: targetId,
+              agentName: agent?.profile.name ?? null,
+            });
+          }
 
           orchestrator.agentManager.voiceCommand(targetId, parsed.command).then((result) => {
-            if (result.success && result.text) {
-              mainWindow?.webContents.send('chat:agentResponse', {
+            if (result.success && result.text && mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('chat:agentResponse', {
                 agentId: targetId,
                 agentName: agent?.profile.name ?? 'Agent',
                 agentRuntime: agent?.profile.runtime ?? '',
@@ -296,6 +323,8 @@ function registerIpcHandlers(): void {
             }
           }).catch((err) => {
             log.error(`Voice command execution failed: ${String(err)}`);
+          }).finally(() => {
+            voiceCommandsInFlight.delete(targetId);
           });
         } else {
           log.warn(`Voice command not routed: no target agent found`);
@@ -397,6 +426,11 @@ function registerIpcHandlers(): void {
       agentRuntime: agent.profile.runtime,
       agentColor: agent.profile.color,
     };
+  });
+
+  // Chat history — paginated conversation loading from JSONL files
+  ipcMain.handle('chat:loadHistory', async (_, options?: { agentId?: string; before?: string; limit?: number }) => {
+    return orchestrator.agentManager.loadConversationHistory(options);
   });
 
   // Memory

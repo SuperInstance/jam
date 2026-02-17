@@ -68,7 +68,7 @@ export const AgentPanelContainer: React.FC = () => {
                 visualState={agent.visualState as AgentVisualState}
                 isSelected={agent.profile.id === selectedAgentId}
                 isRunning={agent.status === 'running'}
-                onClick={() => selectAgent(agent.profile.id)}
+                onClick={() => selectAgent(agent.profile.id === selectedAgentId ? null : agent.profile.id)}
                 onStart={() => startAgent(agent.profile.id)}
                 onStop={() => stopAgent(agent.profile.id)}
                 onDelete={() => deleteAgent(agent.profile.id)}

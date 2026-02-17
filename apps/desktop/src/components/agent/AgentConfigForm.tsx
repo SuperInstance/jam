@@ -217,15 +217,18 @@ export const AgentConfigForm: React.FC<AgentConfigFormProps> = ({
 
       <div>
         <label className="block text-xs text-zinc-400 mb-1">
-          Working Directory (optional)
+          Working Directory
         </label>
         <input
           type="text"
           value={cwd}
           onChange={(e) => setCwd(e.target.value)}
-          placeholder="e.g., /Users/gad/Desktop/repo/myproject"
+          placeholder={name ? `~/.jam/agents/` + name.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase() : '~/.jam/agents/agent-name'}
           className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
         />
+        <p className="text-[10px] text-zinc-600 mt-1">
+          Defaults to ~/.jam/agents/agent-name if left empty. Created automatically.
+        </p>
       </div>
 
       <div>
