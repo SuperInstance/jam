@@ -1,7 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useAppStore } from '@/store';
 
-const VAD_THRESHOLD = 0.015; // RMS threshold for voice activity
+// Fallback constants — overridden by config from main process
+const DEFAULT_VAD_THRESHOLD = 0.03;
+const DEFAULT_MIN_RECORDING_MS = 600;
 const SILENCE_TIMEOUT_MS = 2500; // Stop recording after 2.5s of silence
 const VAD_CHECK_INTERVAL_MS = 50; // Check audio level every 50ms
 
@@ -24,6 +26,21 @@ export function useVoice() {
   const vadIntervalRef = useRef<number | null>(null);
   const silenceTimerRef = useRef<number | null>(null);
   const isRecordingRef = useRef(false);
+  const recordingStartRef = useRef<number>(0);
+
+  // Configurable filter settings from main process
+  const vadThresholdRef = useRef(DEFAULT_VAD_THRESHOLD);
+  const minRecordingMsRef = useRef(DEFAULT_MIN_RECORDING_MS);
+
+  // Load filter settings from main process on mount
+  useEffect(() => {
+    window.jam.voice.getFilterSettings().then((settings) => {
+      vadThresholdRef.current = settings.vadThreshold;
+      minRecordingMsRef.current = settings.minRecordingMs;
+    }).catch(() => {
+      // Use defaults if IPC fails
+    });
+  }, []);
 
   // Get audio RMS level from analyser
   const getAudioLevel = useCallback((): number => {
@@ -49,6 +66,7 @@ export function useVoice() {
     window.dispatchEvent(new Event('jam:interrupt-tts'));
 
     chunksRef.current = [];
+    recordingStartRef.current = Date.now();
 
     const mediaRecorder = new MediaRecorder(stream, {
       mimeType: 'audio/webm;codecs=opus',
@@ -62,6 +80,12 @@ export function useVoice() {
 
     mediaRecorder.onstop = async () => {
       if (chunksRef.current.length === 0) return;
+
+      // Minimum recording duration filter — discard noise blips
+      const duration = Date.now() - recordingStartRef.current;
+      if (duration < minRecordingMsRef.current) {
+        return; // Too short, likely noise
+      }
 
       // Routing is name-based in main process — no need for selectedAgentId
       const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
@@ -176,7 +200,7 @@ export function useVoice() {
         const level = getAudioLevel();
         setAudioLevel(level);
 
-        if (level > VAD_THRESHOLD) {
+        if (level > vadThresholdRef.current) {
           // Voice detected — start recording if not already
           if (!isRecordingRef.current) {
             beginRecording();
@@ -216,6 +240,14 @@ export function useVoice() {
     }
   }, [isListening, startListening, stopListening]);
 
+  // Reload filter settings when config changes (triggered after Settings save)
+  const reloadFilterSettings = useCallback(() => {
+    window.jam.voice.getFilterSettings().then((settings) => {
+      vadThresholdRef.current = settings.vadThreshold;
+      minRecordingMsRef.current = settings.minRecordingMs;
+    }).catch(() => {});
+  }, []);
+
   // Cleanup on unmount or agent change
   useEffect(() => {
     return () => {
@@ -238,5 +270,7 @@ export function useVoice() {
     stopCapture,
     // Always-listening
     toggleListening,
+    // Settings
+    reloadFilterSettings,
   };
 }

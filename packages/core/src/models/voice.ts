@@ -4,6 +4,8 @@ export interface TranscriptionResult {
   text: string;
   confidence: number;
   language?: string;
+  /** Whisper's no_speech_prob — probability that audio contains no speech (0.0 = speech, 1.0 = noise) */
+  noSpeechProb?: number;
 }
 
 export interface VoiceInfo {

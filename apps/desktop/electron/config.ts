@@ -8,6 +8,8 @@ const log = createLogger('Config');
 export type STTProviderType = 'openai' | 'elevenlabs';
 export type TTSProviderType = 'openai' | 'elevenlabs';
 
+export type VoiceSensitivity = 'low' | 'medium' | 'high';
+
 export interface JamConfig {
   sttProvider: STTProviderType;
   ttsProvider: TTSProviderType;
@@ -16,6 +18,11 @@ export interface JamConfig {
   defaultModel: string;
   defaultRuntime: 'claude-code' | 'opencode';
   theme: 'dark' | 'light';
+  // Voice filtering
+  voiceSensitivity: VoiceSensitivity;
+  minRecordingMs: number;
+  noSpeechThreshold: number;
+  noiseBlocklist: string[];
 }
 
 const DEFAULT_CONFIG: JamConfig = {
@@ -26,6 +33,15 @@ const DEFAULT_CONFIG: JamConfig = {
   defaultModel: 'claude-opus-4-6',
   defaultRuntime: 'claude-code',
   theme: 'dark',
+  voiceSensitivity: 'medium',
+  minRecordingMs: 600,
+  noSpeechThreshold: 0.6,
+  noiseBlocklist: [
+    'bye', 'bye bye', 'bye-bye', 'goodbye',
+    'thank you', 'thanks', 'thank', 'you',
+    'hmm', 'uh', 'um', 'ah', 'oh',
+    'okay', 'ok',
+  ],
 };
 
 export function loadConfig(): JamConfig {

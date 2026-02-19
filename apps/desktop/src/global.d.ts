@@ -86,6 +86,7 @@ export interface JamAPI {
       agentId: string,
       text: string,
     ) => Promise<{ success: boolean; audioPath?: string; error?: string }>;
+    getFilterSettings: () => Promise<{ vadThreshold: number; minRecordingMs: number }>;
   };
 
   memory: {

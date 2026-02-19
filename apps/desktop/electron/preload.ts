@@ -98,6 +98,7 @@ export interface JamAPI {
       agentId: string,
       text: string,
     ) => Promise<{ success: boolean; audioPath?: string; error?: string }>;
+    getFilterSettings: () => Promise<{ vadThreshold: number; minRecordingMs: number }>;
   };
 
   memory: {
@@ -253,6 +254,8 @@ contextBridge.exposeInMainWorld('jam', {
     onStateChange: (cb) => createEventListener('voice:stateChanged', cb),
     requestTTS: (agentId, text) =>
       ipcRenderer.invoke('voice:requestTTS', agentId, text),
+    getFilterSettings: () =>
+      ipcRenderer.invoke('voice:getFilterSettings'),
   },
 
   memory: {

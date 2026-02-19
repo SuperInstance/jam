@@ -41,7 +41,13 @@ export class VoiceService {
     log.debug(`Transcribing audio chunk (${audio.length} bytes)`);
 
     try {
-      const result = await this.sttProvider.transcribe(audio);
+      // Pass agent names as prompt hints — helps Whisper recognize domain terms
+      const agentNames = this.commandParser.getAgentNames();
+      const prompt = agentNames.length > 0
+        ? `Agent names: ${agentNames.join(', ')}.`
+        : undefined;
+
+      const result = await this.sttProvider.transcribe(audio, { language: 'en', prompt });
       log.info(`Transcription: "${result.text}" (confidence: ${result.confidence})`);
 
       this.eventBus.emit('voice:transcription', {

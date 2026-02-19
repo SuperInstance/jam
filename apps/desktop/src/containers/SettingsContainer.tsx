@@ -3,6 +3,8 @@ import React, { useState, useEffect } from 'react';
 type STTProvider = 'openai' | 'elevenlabs';
 type TTSProvider = 'openai' | 'elevenlabs';
 
+type VoiceSensitivity = 'low' | 'medium' | 'high';
+
 interface Config {
   sttProvider: STTProvider;
   ttsProvider: TTSProvider;
@@ -10,6 +12,10 @@ interface Config {
   ttsVoice: string;
   defaultModel: string;
   defaultRuntime: string;
+  voiceSensitivity: VoiceSensitivity;
+  minRecordingMs: number;
+  noSpeechThreshold: number;
+  noiseBlocklist: string[];
 }
 
 // --- STT models per provider ---
@@ -128,7 +134,17 @@ export const SettingsContainer: React.FC<{ onClose: () => void }> = ({
     ttsVoice: 'alloy',
     defaultModel: 'claude-opus-4-6',
     defaultRuntime: 'claude-code',
+    voiceSensitivity: 'medium',
+    minRecordingMs: 600,
+    noSpeechThreshold: 0.6,
+    noiseBlocklist: [
+      'bye', 'bye bye', 'bye-bye', 'goodbye',
+      'thank you', 'thanks', 'thank', 'you',
+      'hmm', 'uh', 'um', 'ah', 'oh',
+      'okay', 'ok',
+    ],
   });
+  const [blocklistText, setBlocklistText] = useState('');
 
   const [openaiKey, setOpenaiKey] = useState('');
   const [elevenlabsKey, setElevenlabsKey] = useState('');
@@ -141,6 +157,9 @@ export const SettingsContainer: React.FC<{ onClose: () => void }> = ({
     window.jam.config.get().then((c) => {
       const loaded = c as unknown as Partial<Config>;
       setConfig((prev) => ({ ...prev, ...loaded }));
+      if (Array.isArray(loaded.noiseBlocklist)) {
+        setBlocklistText(loaded.noiseBlocklist.join('\n'));
+      }
     });
     window.jam.apiKeys.has('openai').then(setHasOpenai);
     window.jam.apiKeys.has('elevenlabs').then(setHasElevenlabs);
@@ -186,7 +205,15 @@ export const SettingsContainer: React.FC<{ onClose: () => void }> = ({
         setElevenlabsKey('');
       }
 
-      await window.jam.config.set(config as unknown as Record<string, unknown>);
+      // Convert blocklist textarea to array before saving
+      const configToSave = {
+        ...config,
+        noiseBlocklist: blocklistText
+          .split('\n')
+          .map((s) => s.trim())
+          .filter(Boolean),
+      };
+      await window.jam.config.set(configToSave as unknown as Record<string, unknown>);
       setStatus('Settings saved.');
     } catch (error) {
       setStatus(`Error: ${error}`);
@@ -263,6 +290,89 @@ export const SettingsContainer: React.FC<{ onClose: () => void }> = ({
                 onChange={(val) => setConfig({ ...config, ttsVoice: val })}
                 placeholder="Custom voice ID"
               />
+            </div>
+          </div>
+        </section>
+
+        {/* Voice Filtering */}
+        <section>
+          <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">
+            Voice Filtering
+          </h3>
+          <p className="text-xs text-zinc-500 mb-3">
+            Reduce false triggers from ambient noise in always-listening mode.
+          </p>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs text-zinc-400 mb-1">Mic Sensitivity</label>
+              <div className="flex gap-1">
+                {(['low', 'medium', 'high'] as const).map((level) => (
+                  <button
+                    key={level}
+                    onClick={() => setConfig({ ...config, voiceSensitivity: level })}
+                    className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                      config.voiceSensitivity === level
+                        ? 'bg-blue-600 border-blue-500 text-white'
+                        : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-600'
+                    }`}
+                  >
+                    {level.charAt(0).toUpperCase() + level.slice(1)}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-zinc-600 mt-1">
+                Low = quiet room, Medium = normal, High = noisy environment
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs text-zinc-400 mb-1">
+                Min Recording Duration <span className="text-zinc-600">({config.minRecordingMs}ms)</span>
+              </label>
+              <input
+                type="range"
+                min={100}
+                max={2000}
+                step={100}
+                value={config.minRecordingMs}
+                onChange={(e) => setConfig({ ...config, minRecordingMs: Number(e.target.value) })}
+                className="w-full accent-blue-500"
+              />
+              <p className="text-xs text-zinc-600">
+                Recordings shorter than this are discarded as noise
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs text-zinc-400 mb-1">
+                Speech Confidence Threshold <span className="text-zinc-600">({config.noSpeechThreshold.toFixed(1)})</span>
+              </label>
+              <input
+                type="range"
+                min={0.1}
+                max={0.95}
+                step={0.05}
+                value={config.noSpeechThreshold}
+                onChange={(e) => setConfig({ ...config, noSpeechThreshold: Number(e.target.value) })}
+                className="w-full accent-blue-500"
+              />
+              <p className="text-xs text-zinc-600">
+                Higher = stricter, rejects more noise (Whisper only)
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs text-zinc-400 mb-1">Noise Blocklist</label>
+              <textarea
+                value={blocklistText}
+                onChange={(e) => setBlocklistText(e.target.value)}
+                rows={4}
+                placeholder="One phrase per line (e.g., bye bye)"
+                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500 font-mono"
+              />
+              <p className="text-xs text-zinc-600">
+                Transcriptions matching these phrases exactly are ignored
+              </p>
             </div>
           </div>
         </section>

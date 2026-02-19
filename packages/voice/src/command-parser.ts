@@ -45,6 +45,10 @@ const INTERRUPT_PATTERNS = [
 export class CommandParser {
   private agentNames: Map<string, AgentId> = new Map();
 
+  getAgentNames(): string[] {
+    return Array.from(this.agentNames.keys());
+  }
+
   updateAgentNames(agents: Array<{ id: AgentId; name: string }>): void {
     this.agentNames.clear();
     for (const agent of agents) {

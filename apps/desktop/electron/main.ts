@@ -283,11 +283,27 @@ function registerIpcHandlers(): void {
 
         log.info(`Transcribed: "${result.text}" (confidence: ${result.confidence})`);
 
+        // --- Noise filtering pipeline ---
+
         // Strip ambient noise — STT often transcribes background sounds as
         // parenthetical descriptions like "(door closes)", "(birds chirping)" etc.
         const cleaned = result.text.replace(/\s*\([^)]*\)\s*/g, ' ').trim();
         if (cleaned.length < 3) {
           log.debug(`Filtered noise transcription: "${result.text}"`);
+          return;
+        }
+
+        // no_speech_prob filter (Whisper) — high value means audio is likely noise
+        const { noSpeechThreshold, noiseBlocklist } = orchestrator.config;
+        if (result.noSpeechProb !== undefined && result.noSpeechProb > noSpeechThreshold) {
+          log.debug(`Filtered by no_speech_prob (${result.noSpeechProb.toFixed(2)} > ${noSpeechThreshold}): "${cleaned}"`);
+          return;
+        }
+
+        // Noise phrase blocklist — common phantom transcriptions from ambient sound
+        const lowerCleaned = cleaned.toLowerCase().trim();
+        if (noiseBlocklist.some((phrase: string) => lowerCleaned === phrase.toLowerCase())) {
+          log.debug(`Filtered by noise blocklist: "${cleaned}"`);
           return;
         }
 
@@ -432,6 +448,17 @@ function registerIpcHandlers(): void {
       }
     },
   );
+
+  // Voice filter settings — renderer reads these for VAD threshold + min recording
+  const SENSITIVITY_THRESHOLDS: Record<string, number> = { low: 0.01, medium: 0.03, high: 0.06 };
+
+  ipcMain.handle('voice:getFilterSettings', () => {
+    const { voiceSensitivity, minRecordingMs } = orchestrator.config;
+    return {
+      vadThreshold: SENSITIVITY_THRESHOLDS[voiceSensitivity] ?? 0.03,
+      minRecordingMs: minRecordingMs ?? 600,
+    };
+  });
 
   // Chat — text commands routed through execute() pipeline (same as voice)
   let lastTextTargetId: string | null = null;

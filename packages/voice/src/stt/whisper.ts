@@ -48,12 +48,22 @@ export class WhisperSTTProvider implements ISTTProvider {
       throw new Error(`Whisper API error (${response.status}): ${error}`);
     }
 
-    const result = (await response.json()) as { text: string; language?: string };
+    const result = (await response.json()) as {
+      text: string;
+      language?: string;
+      segments?: Array<{ no_speech_prob: number }>;
+    };
+
+    // Extract worst-case no_speech_prob across segments (highest = most likely noise)
+    const noSpeechProb = result.segments?.length
+      ? Math.max(...result.segments.map((s) => s.no_speech_prob))
+      : undefined;
 
     return {
       text: result.text,
       confidence: 1.0,
       language: result.language,
+      noSpeechProb,
     };
   }
 }
