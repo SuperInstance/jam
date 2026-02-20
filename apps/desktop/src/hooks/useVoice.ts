@@ -17,6 +17,7 @@ export function useVoice() {
   const [isRecording, setIsRecording] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
+  const [micError, setMicError] = useState<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -115,6 +116,21 @@ export function useVoice() {
   const acquireMicStream = useCallback(async (): Promise<MediaStream> => {
     if (streamRef.current) return streamRef.current;
 
+    // Check OS-level mic permission first (macOS)
+    try {
+      const perm = await window.jam.voice.checkMicPermission();
+      if (!perm.granted) {
+        const msg = perm.status === 'denied'
+          ? 'Microphone access denied. Open System Settings → Privacy & Security → Microphone and enable Jam.'
+          : 'Microphone permission not granted. Please allow microphone access when prompted.';
+        setMicError(msg);
+        throw new Error(msg);
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('Microphone')) throw err;
+      // IPC call failed — continue and let getUserMedia handle it
+    }
+
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: true,
@@ -122,6 +138,8 @@ export function useVoice() {
         sampleRate: 16000,
       },
     });
+
+    setMicError(null);
 
     const audioContext = new AudioContext();
     const source = audioContext.createMediaStreamSource(stream);
@@ -172,6 +190,7 @@ export function useVoice() {
       }, VAD_CHECK_INTERVAL_MS);
     } catch (error) {
       console.error('Failed to start audio capture:', error);
+      setMicError(error instanceof Error ? error.message : 'Failed to access microphone');
     }
   }, [acquireMicStream, beginRecording, getAudioLevel]);
 
@@ -222,6 +241,7 @@ export function useVoice() {
       }, VAD_CHECK_INTERVAL_MS);
     } catch (error) {
       console.error('Failed to start always-listening mode:', error);
+      setMicError(error instanceof Error ? error.message : 'Failed to access microphone');
     }
   }, [acquireMicStream, setVoiceState, getAudioLevel, beginRecording, endRecording]);
 
@@ -264,6 +284,7 @@ export function useVoice() {
     isRecording,
     isListening,
     audioLevel,
+    micError,
     setVoiceMode,
     // Push-to-talk
     startCapture,

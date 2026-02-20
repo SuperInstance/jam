@@ -14,6 +14,7 @@ export const CommandBarContainer: React.FC = () => {
     isRecording,
     isListening,
     audioLevel,
+    micError,
     setVoiceMode,
     startCapture,
     stopCapture,
@@ -52,6 +53,12 @@ export const CommandBarContainer: React.FC = () => {
         text={transcript?.text ?? null}
         isFinal={transcript?.isFinal ?? false}
       />
+
+      {micError && (
+        <div className="mb-2 px-3 py-2 bg-red-900/30 border border-red-800 rounded-lg text-xs text-red-300">
+          {micError}
+        </div>
+      )}
 
       <div className="flex items-center gap-3">
         <MicButton

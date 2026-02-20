@@ -87,6 +87,7 @@ export interface JamAPI {
       text: string,
     ) => Promise<{ success: boolean; audioPath?: string; error?: string }>;
     getFilterSettings: () => Promise<{ vadThreshold: number; minRecordingMs: number }>;
+    checkMicPermission: () => Promise<{ granted: boolean; status?: string }>;
   };
 
   memory: {

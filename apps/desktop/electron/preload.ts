@@ -99,6 +99,7 @@ export interface JamAPI {
       text: string,
     ) => Promise<{ success: boolean; audioPath?: string; error?: string }>;
     getFilterSettings: () => Promise<{ vadThreshold: number; minRecordingMs: number }>;
+    checkMicPermission: () => Promise<{ granted: boolean; status?: string }>;
   };
 
   memory: {
@@ -281,6 +282,8 @@ contextBridge.exposeInMainWorld('jam', {
       ipcRenderer.invoke('voice:requestTTS', agentId, text),
     getFilterSettings: () =>
       ipcRenderer.invoke('voice:getFilterSettings'),
+    checkMicPermission: () =>
+      ipcRenderer.invoke('voice:checkMicPermission'),
   },
 
   memory: {

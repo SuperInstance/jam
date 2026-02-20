@@ -5,6 +5,7 @@ import {
   Tray,
   Menu,
   nativeImage,
+  systemPreferences,
 } from 'electron';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
@@ -564,6 +565,21 @@ function registerIpcHandlers(): void {
     };
   });
 
+  ipcMain.handle('voice:checkMicPermission', async () => {
+    if (process.platform === 'darwin') {
+      const status = systemPreferences.getMediaAccessStatus('microphone');
+      if (status === 'granted') return { granted: true };
+      // Try requesting if not yet decided
+      if (status === 'not-determined') {
+        const granted = await systemPreferences.askForMediaAccess('microphone');
+        return { granted };
+      }
+      return { granted: false, status };
+    }
+    // On Windows/Linux, permission is handled at OS level
+    return { granted: true };
+  });
+
   // Chat — text commands routed through execute() pipeline (same as voice)
   let lastTextTargetId: string | null = null;
 
@@ -980,6 +996,17 @@ app.whenReady().then(() => {
 
   if (mainWindow) {
     orchestrator.setMainWindow(mainWindow);
+  }
+
+  // Request microphone permission on macOS before initializing voice
+  if (process.platform === 'darwin') {
+    systemPreferences.askForMediaAccess('microphone').then((granted) => {
+      if (!granted) {
+        log.warn('Microphone permission denied — voice commands will not work');
+      }
+    }).catch((err) => {
+      log.warn(`Microphone permission request failed: ${String(err)}`);
+    });
   }
 
   // Initialize voice if API keys are present
