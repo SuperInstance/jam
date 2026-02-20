@@ -721,12 +721,29 @@ function registerIpcHandlers(): void {
     const homedir = process.env.HOME || '';
     const fs = require('node:fs');
 
+    // Check the Node.js version available in a login shell (PTY context).
+    // Claude Code v2+ requires Node.js 20.12+.
+    let nodeVersion = '';
+    let nodeMajor = 0;
+    try {
+      const shell = process.env.SHELL || '/bin/zsh';
+      nodeVersion = execSync(`${shell} -lc 'node --version'`, {
+        encoding: 'utf-8',
+        timeout: 5000,
+      }).trim().replace(/^v/, '');
+      nodeMajor = parseInt(nodeVersion.split('.')[0], 10) || 0;
+    } catch {
+      // node not in login shell PATH
+    }
+
     const runtimes: Array<{
       id: string;
       name: string;
       available: boolean;
       authenticated: boolean;
       version: string;
+      nodeVersion: string;
+      error: string;
       authHint: string;
     }> = [];
 
@@ -737,6 +754,7 @@ function registerIpcHandlers(): void {
       let available = false;
       let authenticated = false;
       let version = '';
+      let error = '';
       let authHint = '';
 
       // Check binary exists AND works by running --version
@@ -756,13 +774,15 @@ function registerIpcHandlers(): void {
       }
 
       if (available) {
+        // Claude Code v2+ requires Node.js 20.12+
+        if (id === 'claude-code' && nodeMajor > 0 && nodeMajor < 20) {
+          error = `Requires Node.js 20+, but login shell has v${nodeVersion}. Run: nvm alias default 22`;
+        }
+
         if (id === 'claude-code') {
           // Claude Code stores OAuth tokens in the system keychain after login.
           // settings.json is for user prefs (we may create it ourselves), so check
           // for files that only exist after a real interactive session:
-          // - projects/ dir: created on first use
-          // - statsCache: created after first session
-          // - .credentials.json: some installations store tokens here
           const claudeDir = `${homedir}/.claude`;
           authenticated = fs.existsSync(`${claudeDir}/statsCache`) ||
             fs.existsSync(`${claudeDir}/stats-cache.json`) ||
@@ -781,7 +801,7 @@ function registerIpcHandlers(): void {
         }
       }
 
-      runtimes.push({ id, name, available, authenticated, version, authHint });
+      runtimes.push({ id, name, available, authenticated, version, nodeVersion, error, authHint });
     }
     return runtimes;
   });

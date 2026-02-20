@@ -131,6 +131,8 @@ export interface JamAPI {
       available: boolean;
       authenticated: boolean;
       version: string;
+      nodeVersion: string;
+      error: string;
       authHint: string;
     }>>;
     getOnboardingStatus: () => Promise<boolean>;

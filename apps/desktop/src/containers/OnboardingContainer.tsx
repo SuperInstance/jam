@@ -9,6 +9,8 @@ interface RuntimeInfo {
   available: boolean;
   authenticated: boolean;
   version: string;
+  nodeVersion: string;
+  error: string;
   authHint: string;
 }
 
@@ -182,11 +184,13 @@ const RuntimesStep: React.FC<{ onNext: () => void; onPrev: () => void }> = ({ on
             <div
               key={r.id}
               className={`p-3 rounded-lg border ${
-                r.available && r.authenticated
-                  ? 'border-green-500/30 bg-green-500/5'
-                  : r.available
-                    ? 'border-amber-500/30 bg-amber-500/5'
-                    : 'border-zinc-700 bg-zinc-800/50'
+                r.error
+                  ? 'border-red-500/30 bg-red-500/5'
+                  : r.available && r.authenticated
+                    ? 'border-green-500/30 bg-green-500/5'
+                    : r.available
+                      ? 'border-amber-500/30 bg-amber-500/5'
+                      : 'border-zinc-700 bg-zinc-800/50'
               }`}
             >
               <div className="flex items-center justify-between">
@@ -195,9 +199,12 @@ const RuntimesStep: React.FC<{ onNext: () => void; onPrev: () => void }> = ({ on
                   <div className="text-xs text-zinc-500">
                     {r.id === 'claude-code' ? 'claude CLI' : 'opencode CLI'}
                     {r.version && ` v${r.version}`}
+                    {r.nodeVersion && ` (Node ${r.nodeVersion})`}
                   </div>
                 </div>
-                {r.available && r.authenticated ? (
+                {r.error ? (
+                  <span className="text-xs text-red-400 font-medium">Error</span>
+                ) : r.available && r.authenticated ? (
                   <span className="text-xs text-green-400 font-medium">Ready</span>
                 ) : r.available ? (
                   <span className="text-xs text-amber-400 font-medium">Needs auth</span>
@@ -205,6 +212,13 @@ const RuntimesStep: React.FC<{ onNext: () => void; onPrev: () => void }> = ({ on
                   <span className="text-xs text-zinc-500">Not installed</span>
                 )}
               </div>
+
+              {/* Error message */}
+              {r.error && (
+                <div className="mt-2 p-2 rounded bg-red-500/10 border border-red-500/20">
+                  <p className="text-xs text-red-300">{r.error}</p>
+                </div>
+              )}
 
               {/* Actions for installed runtimes */}
               {r.available && (
