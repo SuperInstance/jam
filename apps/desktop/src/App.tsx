@@ -10,6 +10,7 @@ import { SettingsContainer } from '@/containers/SettingsContainer';
 import { LogsContainer } from '@/containers/LogsContainer';
 import { CompactViewContainer } from '@/containers/CompactViewContainer';
 import { OnboardingContainer } from '@/containers/OnboardingContainer';
+import { SetupBanner } from '@/components/SetupBanner';
 import type { AgentEntry } from '@/store/agentSlice';
 import type { ChatMessage } from '@/store/chatSlice';
 
@@ -400,6 +401,7 @@ export default function App() {
       </Sidebar>
 
       <div className="flex-1 flex flex-col min-w-0">
+        <SetupBanner onOpenSettings={() => setActiveTab('settings')} />
         {viewMode === 'chat' ? <ChatContainer /> : <AgentStageContainer />}
         <CommandBarContainer />
       </div>

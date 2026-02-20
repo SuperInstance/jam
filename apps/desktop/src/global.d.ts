@@ -127,7 +127,14 @@ export interface JamAPI {
   setup: {
     detectRuntimes: () => Promise<Array<{ id: string; name: string; available: boolean }>>;
     getOnboardingStatus: () => Promise<boolean>;
+    getSetupStatus: () => Promise<{
+      hasRuntime: boolean;
+      hasVoiceKeys: boolean;
+      hasAgents: boolean;
+      missing: string[];
+    }>;
     completeOnboarding: () => Promise<{ success: boolean }>;
+    resetOnboarding: () => Promise<{ success: boolean }>;
   };
 
   app: {

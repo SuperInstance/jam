@@ -703,13 +703,38 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('setup:getOnboardingStatus', () => {
-    const complete = orchestrator.appStore.isOnboardingComplete();
-    // Auto-complete if user already has agents (existing user upgrading)
-    if (!complete && orchestrator.appStore.getProfiles().length > 0) {
-      orchestrator.appStore.setOnboardingComplete(true);
-      return true;
+    return orchestrator.appStore.isOnboardingComplete();
+  });
+
+  ipcMain.handle('setup:resetOnboarding', () => {
+    orchestrator.appStore.setOnboardingComplete(false);
+    return { success: true };
+  });
+
+  ipcMain.handle('setup:getSetupStatus', () => {
+    const hasAgents = orchestrator.appStore.getProfiles().length > 0;
+    const hasOpenai = orchestrator.appStore.getApiKey('openai') !== null;
+    const hasElevenlabs = orchestrator.appStore.getApiKey('elevenlabs') !== null;
+    const hasVoiceKeys = hasOpenai || hasElevenlabs;
+
+    // Detect runtimes
+    let hasRuntime = false;
+    for (const cmd of ['claude', 'opencode']) {
+      try {
+        execSync(`command -v ${cmd}`, { encoding: 'utf-8', timeout: 3000 });
+        hasRuntime = true;
+        break;
+      } catch {
+        // not found
+      }
     }
-    return complete;
+
+    const missing: string[] = [];
+    if (!hasRuntime) missing.push('runtime');
+    if (!hasVoiceKeys) missing.push('voice-keys');
+    if (!hasAgents) missing.push('agent');
+
+    return { hasRuntime, hasVoiceKeys, hasAgents, missing };
   });
 
   ipcMain.handle('setup:completeOnboarding', () => {

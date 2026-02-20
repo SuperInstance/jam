@@ -134,7 +134,14 @@ export interface JamAPI {
   setup: {
     detectRuntimes: () => Promise<Array<{ id: string; name: string; available: boolean }>>;
     getOnboardingStatus: () => Promise<boolean>;
+    getSetupStatus: () => Promise<{
+      hasRuntime: boolean;
+      hasVoiceKeys: boolean;
+      hasAgents: boolean;
+      missing: string[];
+    }>;
     completeOnboarding: () => Promise<{ success: boolean }>;
+    resetOnboarding: () => Promise<{ success: boolean }>;
   };
 
   app: {
@@ -292,7 +299,9 @@ contextBridge.exposeInMainWorld('jam', {
   setup: {
     detectRuntimes: () => ipcRenderer.invoke('setup:detectRuntimes'),
     getOnboardingStatus: () => ipcRenderer.invoke('setup:getOnboardingStatus'),
+    getSetupStatus: () => ipcRenderer.invoke('setup:getSetupStatus'),
     completeOnboarding: () => ipcRenderer.invoke('setup:completeOnboarding'),
+    resetOnboarding: () => ipcRenderer.invoke('setup:resetOnboarding'),
   },
 
   app: {
