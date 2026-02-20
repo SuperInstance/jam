@@ -2,6 +2,7 @@
   "name": "@jam/desktop",
   "version": "0.1.0",
   "private": true,
+  "repository": "github:Dag7/jam",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
