@@ -33,11 +33,14 @@ if [ "$NODE_MAJOR" -lt "$REQUIRED_NODE" ]; then
   warn "Node $NODE_MAJOR detected, but >= $REQUIRED_NODE is required (Vite 7 needs Node 22.12+)."
 
   # Try to auto-switch with nvm
+  # nvm uses unbound variables internally, so disable -u around nvm calls
   if command -v nvm &>/dev/null || [ -s "$HOME/.nvm/nvm.sh" ]; then
-    [ -s "$HOME/.nvm/nvm.sh" ] && source "$HOME/.nvm/nvm.sh"
+    [ -s "$HOME/.nvm/nvm.sh" ] && set +u && source "$HOME/.nvm/nvm.sh" && set -u
     step "Switching Node via nvm..."
+    set +u
     nvm install "$REQUIRED_NODE" || fail "nvm install failed"
     nvm use "$REQUIRED_NODE"
+    set -u
     info "Now using Node $(node -v)"
   elif command -v fnm &>/dev/null; then
     step "Switching Node via fnm..."
