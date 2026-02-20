@@ -2,17 +2,32 @@
 
 AI Agent Orchestrator — run a team of AI agents from your desktop with voice control.
 
-[![Release](https://img.shields.io/github/v/release/doorzdev/jam?label=Download&style=flat-square)](https://github.com/doorzdev/jam/releases/latest)
+[![Release](https://img.shields.io/github/v/release/Dag7/jam?label=Download&style=flat-square)](https://github.com/Dag7/jam/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=flat-square)]()
-[![License](https://img.shields.io/github/license/doorzdev/jam?style=flat-square)]()
+[![License](https://img.shields.io/github/license/Dag7/jam?style=flat-square)]()
+
+## Quick Start
+
+```bash
+git clone https://github.com/Dag7/jam.git
+cd jam
+./scripts/setup.sh
+yarn dev
+```
+
+The setup script handles everything: Node version, Yarn 4 via Corepack, dependencies, and verification. Just clone and run.
+
+> **Requires**: Node.js >= 20 (the script will install it via nvm/fnm if needed)
 
 ## Download
 
+Pre-built binaries — no setup needed:
+
 | Platform | Download |
 |----------|----------|
-| macOS | [Jam.dmg](https://github.com/doorzdev/jam/releases/latest/download/Jam.dmg) |
-| Windows | [Jam-Setup.exe](https://github.com/doorzdev/jam/releases/latest/download/Jam-Setup.exe) |
-| Linux | [Jam.AppImage](https://github.com/doorzdev/jam/releases/latest/download/Jam.AppImage) |
+| macOS | [Jam.dmg](https://github.com/Dag7/jam/releases/latest/download/Jam.dmg) |
+| Windows | [Jam-Setup.exe](https://github.com/Dag7/jam/releases/latest/download/Jam-Setup.exe) |
+| Linux | [Jam.AppImage](https://github.com/Dag7/jam/releases/latest/download/Jam.AppImage) |
 
 > macOS builds are signed and notarized with Apple Developer ID — no Gatekeeper warnings.
 
@@ -55,7 +70,7 @@ Jam lets you create, manage, and talk to a team of AI coding agents running on y
 └─────────────────────────────────────────────┘
 ```
 
-## Setup
+## Configuration
 
 ### Prerequisites
 
@@ -64,7 +79,7 @@ Jam lets you create, manage, and talk to a team of AI coding agents running on y
   - OpenAI API key (for Whisper STT and/or OpenAI TTS)
   - ElevenLabs API key (for ElevenLabs STT and/or TTS)
 
-### Configuration
+### First Launch
 
 1. Launch Jam
 2. Open **Settings** (gear icon in sidebar)
@@ -85,29 +100,6 @@ Each agent gets a directory at `~/.jam/agents/<name>/`:
 ```
 
 ## Development
-
-### Requirements
-
-- Node.js 20+
-- Yarn 4 (Corepack)
-
-### Getting Started
-
-```bash
-git clone https://github.com/Dag7/jam.git
-cd jam
-./scripts/setup.sh    # handles Node, Yarn 4, and dependencies
-yarn dev              # start dev mode
-```
-
-Or manually:
-
-```bash
-nvm install 20        # or any Node >= 20
-corepack enable       # activates Yarn 4 from packageManager field
-yarn install
-yarn dev
-```
 
 ### Commands
 
