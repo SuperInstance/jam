@@ -57,19 +57,34 @@ fi
 step "Enabling Corepack (for Yarn 4)..."
 
 if ! command -v corepack &>/dev/null; then
-  fail "Corepack not found. It ships with Node >= 16. Try: npm install -g corepack"
+  warn "Corepack not found, installing via npm..."
+  npm install -g corepack || fail "Could not install corepack"
 fi
 
-corepack enable 2>/dev/null || {
-  warn "corepack enable failed (may need sudo on some systems)"
-  sudo corepack enable || fail "Could not enable corepack"
-}
+# corepack enable can hang on macOS — use timeout
+info "Running corepack enable (this may take a moment)..."
+if command -v timeout &>/dev/null; then
+  timeout 30 corepack enable 2>/dev/null || corepack enable 2>/dev/null || {
+    warn "corepack enable failed, trying with sudo..."
+    sudo corepack enable || fail "Could not enable corepack"
+  }
+else
+  corepack enable 2>/dev/null || {
+    warn "corepack enable failed, trying with sudo..."
+    sudo corepack enable || fail "Could not enable corepack"
+  }
+fi
+
+# Pre-download the yarn version specified in packageManager
+info "Preparing Yarn 4..."
+corepack prepare --activate 2>/dev/null || true
 
 # Verify Yarn version
 YARN_VERSION=$(yarn --version 2>/dev/null || echo "0")
 if [[ "$YARN_VERSION" == 1.* ]] || [[ "$YARN_VERSION" == "0" ]]; then
-  fail "Yarn 4 not activated. Got: $YARN_VERSION
-       Try: corepack prepare yarn@4.12.0 --activate"
+  warn "Yarn 4 not activated via corepack, trying direct install..."
+  corepack prepare yarn@4.12.0 --activate || fail "Could not activate Yarn 4"
+  YARN_VERSION=$(yarn --version 2>/dev/null || echo "0")
 fi
 info "Yarn $YARN_VERSION"
 
