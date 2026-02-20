@@ -2,6 +2,11 @@
   "name": "@jam/desktop",
   "version": "0.1.0",
   "private": true,
+  "description": "AI Agent Orchestrator — manage coding agents through voice",
+  "author": {
+    "name": "Gad Shalev",
+    "email": "gadshalev7@gmail.com"
+  },
   "repository": "github:Dag7/jam",
   "main": "dist-electron/main.js",
   "scripts": {
