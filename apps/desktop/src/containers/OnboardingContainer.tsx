@@ -7,6 +7,8 @@ interface RuntimeInfo {
   id: string;
   name: string;
   available: boolean;
+  authenticated: boolean;
+  authHint: string;
 }
 
 const AGENT_COLORS = [
@@ -128,21 +130,31 @@ const RuntimesStep: React.FC<{ onNext: () => void; onPrev: () => void }> = ({ on
   const [runtimes, setRuntimes] = useState<RuntimeInfo[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const refresh = () => {
+    setLoading(true);
     window.jam.setup.detectRuntimes().then((r) => {
       setRuntimes(r);
       setLoading(false);
     });
-  }, []);
+  };
+
+  useEffect(() => { refresh(); }, []);
 
   const hasAnyRuntime = runtimes.some((r) => r.available);
+  const hasAuthedRuntime = runtimes.some((r) => r.available && r.authenticated);
+  const needsAuth = hasAnyRuntime && !hasAuthedRuntime;
+
+  const handleOpenTerminal = (r: RuntimeInfo) => {
+    const cmd = r.id === 'claude-code' ? 'claude' : 'opencode';
+    window.jam.setup.openTerminal(cmd);
+  };
 
   return (
     <div className="space-y-6">
       <div className="text-center">
         <h2 className="text-xl font-bold text-zinc-100">Agent Runtimes</h2>
         <p className="text-sm text-zinc-400 mt-1">
-          Jam needs at least one AI coding CLI installed on your machine.
+          Jam needs at least one AI coding CLI installed and authenticated.
         </p>
       </div>
 
@@ -153,44 +165,65 @@ const RuntimesStep: React.FC<{ onNext: () => void; onPrev: () => void }> = ({ on
           runtimes.map((r) => (
             <div
               key={r.id}
-              className={`flex items-center justify-between p-3 rounded-lg border ${
-                r.available
+              className={`p-3 rounded-lg border ${
+                r.available && r.authenticated
                   ? 'border-green-500/30 bg-green-500/5'
-                  : 'border-zinc-700 bg-zinc-800/50'
+                  : r.available
+                    ? 'border-amber-500/30 bg-amber-500/5'
+                    : 'border-zinc-700 bg-zinc-800/50'
               }`}
             >
-              <div>
-                <div className="text-sm font-medium text-zinc-200">{r.name}</div>
-                <div className="text-xs text-zinc-500">
-                  {r.id === 'claude-code' ? 'claude CLI' : 'opencode CLI'}
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium text-zinc-200">{r.name}</div>
+                  <div className="text-xs text-zinc-500">
+                    {r.id === 'claude-code' ? 'claude CLI' : 'opencode CLI'}
+                  </div>
                 </div>
+                {r.available && r.authenticated ? (
+                  <span className="text-xs text-green-400 font-medium">Ready</span>
+                ) : r.available ? (
+                  <span className="text-xs text-amber-400 font-medium">Needs auth</span>
+                ) : (
+                  <span className="text-xs text-zinc-500">Not installed</span>
+                )}
               </div>
-              {r.available ? (
-                <span className="text-xs text-green-400 font-medium">Detected</span>
-              ) : (
-                <span className="text-xs text-zinc-500">Not found</span>
+
+              {/* Auth action for installed but not authenticated */}
+              {r.available && !r.authenticated && (
+                <div className="mt-2 flex items-center gap-2">
+                  <button
+                    onClick={() => handleOpenTerminal(r)}
+                    className="px-3 py-1.5 text-xs bg-amber-600 hover:bg-amber-500 text-white rounded-md transition-colors"
+                  >
+                    Open Terminal to Authenticate
+                  </button>
+                  <button
+                    onClick={refresh}
+                    className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-md transition-colors"
+                  >
+                    Re-check
+                  </button>
+                </div>
+              )}
+
+              {/* Install hint for missing runtimes */}
+              {!r.available && (
+                <div className="mt-2">
+                  <code className="text-[11px] text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded">
+                    {r.authHint}
+                  </code>
+                </div>
               )}
             </div>
           ))
         )}
       </div>
 
-      {!loading && !hasAnyRuntime && (
-        <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
-          <p className="text-xs text-amber-300">
-            No runtimes found. Install at least one:
-          </p>
-          <ul className="text-xs text-zinc-400 mt-2 space-y-1 list-disc list-inside">
-            <li>
-              <span className="text-zinc-300">Claude Code</span>{' '}
-              — <code className="text-xs bg-zinc-800 px-1 rounded">npm install -g @anthropic-ai/claude-code</code>
-            </li>
-            <li>
-              <span className="text-zinc-300">OpenCode</span>{' '}
-              — see opencode.ai for installation
-            </li>
-          </ul>
-        </div>
+      {needsAuth && (
+        <p className="text-xs text-zinc-500 text-center">
+          Authenticate in the terminal that opens, then click Re-check.
+        </p>
       )}
 
       <StepNav onPrev={onPrev} onNext={onNext} nextLabel={hasAnyRuntime ? 'Continue' : 'Skip for now'} />

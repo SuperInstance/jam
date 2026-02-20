@@ -687,21 +687,69 @@ function registerIpcHandlers(): void {
 
   // Setup / Onboarding
   ipcMain.handle('setup:detectRuntimes', () => {
-    const runtimes: Array<{ id: string; name: string; available: boolean }> = [];
+    const homedir = process.env.HOME || '';
+    const fs = require('node:fs');
+
+    const runtimes: Array<{
+      id: string;
+      name: string;
+      available: boolean;
+      authenticated: boolean;
+      authHint: string;
+    }> = [];
+
     for (const [id, name, cmd] of [
       ['claude-code', 'Claude Code', 'claude'],
       ['opencode', 'OpenCode', 'opencode'],
     ] as const) {
       let available = false;
+      let authenticated = false;
+      let authHint = '';
+
       try {
         execSync(`command -v ${cmd}`, { encoding: 'utf-8', timeout: 3000 });
         available = true;
       } catch {
         // Binary not in PATH
       }
-      runtimes.push({ id, name, available });
+
+      if (available) {
+        if (id === 'claude-code') {
+          // Claude Code stores settings after OAuth login
+          authenticated = fs.existsSync(`${homedir}/.claude/settings.json`);
+          authHint = 'Run "claude" in your terminal to authenticate via browser';
+        } else if (id === 'opencode') {
+          // OpenCode uses API keys configured in its own config
+          authenticated = fs.existsSync(`${homedir}/.opencode/config.json`);
+          authHint = 'Run "opencode" in your terminal to configure';
+        }
+      } else {
+        if (id === 'claude-code') {
+          authHint = 'npm install -g @anthropic-ai/claude-code';
+        } else {
+          authHint = 'See opencode.ai for installation';
+        }
+      }
+
+      runtimes.push({ id, name, available, authenticated, authHint });
     }
     return runtimes;
+  });
+
+  // Open a terminal window to run a command (for CLI auth flows)
+  ipcMain.handle('setup:openTerminal', (_, command: string) => {
+    try {
+      if (process.platform === 'darwin') {
+        execSync(`osascript -e 'tell application "Terminal" to do script "${command}"' -e 'tell application "Terminal" to activate'`, { timeout: 5000 });
+      } else if (process.platform === 'linux') {
+        execSync(`x-terminal-emulator -e "${command}" &`, { timeout: 5000 });
+      } else {
+        execSync(`start cmd /k "${command}"`, { timeout: 5000 });
+      }
+      return { success: true };
+    } catch {
+      return { success: false, error: 'Could not open terminal' };
+    }
   });
 
   ipcMain.handle('setup:getOnboardingStatus', () => {

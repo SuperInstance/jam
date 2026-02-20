@@ -125,7 +125,13 @@ export interface JamAPI {
   };
 
   setup: {
-    detectRuntimes: () => Promise<Array<{ id: string; name: string; available: boolean }>>;
+    detectRuntimes: () => Promise<Array<{
+      id: string;
+      name: string;
+      available: boolean;
+      authenticated: boolean;
+      authHint: string;
+    }>>;
     getOnboardingStatus: () => Promise<boolean>;
     getSetupStatus: () => Promise<{
       hasRuntime: boolean;
@@ -135,6 +141,7 @@ export interface JamAPI {
     }>;
     completeOnboarding: () => Promise<{ success: boolean }>;
     resetOnboarding: () => Promise<{ success: boolean }>;
+    openTerminal: (command: string) => Promise<{ success: boolean; error?: string }>;
   };
 
   app: {
