@@ -45,6 +45,7 @@ export interface AgentSlice {
   addAgent: (agent: AgentEntry) => void;
   removeAgent: (agentId: string) => void;
   updateAgentStatus: (agentId: string, status: string) => void;
+  updateAgentProfile: (agentId: string, profile: AgentEntry['profile']) => void;
   updateAgentVisualState: (agentId: string, state: AgentVisualState) => void;
   setSelectedAgent: (agentId: string | null) => void;
   setAgentActive: (agentId: string, active: boolean) => void;
@@ -96,6 +97,19 @@ export const createAgentSlice: StateCreator<
         agents: {
           ...state.agents,
           [agentId]: { ...agent, status },
+        },
+      };
+    }),
+
+  updateAgentProfile: (agentId, profile) =>
+    set((state) => {
+      const agent = state.agents[agentId];
+      if (!agent) return state;
+      return {
+        ...state,
+        agents: {
+          ...state.agents,
+          [agentId]: { ...agent, profile },
         },
       };
     }),

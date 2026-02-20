@@ -217,6 +217,7 @@ export class AgentManager {
 
     state.profile = { ...state.profile, ...updates };
     this.store.saveProfile(state.profile);
+    this.eventBus.emit('agent:updated', { agentId, profile: state.profile });
 
     return { success: true };
   }

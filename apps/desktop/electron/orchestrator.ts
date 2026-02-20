@@ -118,6 +118,11 @@ export class Orchestrator {
       this.syncAgentNames();
     });
 
+    this.eventBus.on('agent:updated', (data) => {
+      this.sendToRenderer('agents:updated', data);
+      this.syncAgentNames();
+    });
+
     this.eventBus.on('agent:visualStateChanged', (data) => {
       this.sendToRenderer('agents:visualStateChange', data);
     });

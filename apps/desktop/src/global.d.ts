@@ -49,6 +49,9 @@ export interface JamAPI {
     onDeleted: (
       callback: (data: { agentId: string }) => void,
     ) => () => void;
+    onUpdated: (
+      callback: (data: { agentId: string; profile: Record<string, unknown> }) => void,
+    ) => () => void;
     onVisualStateChange: (
       callback: (data: { agentId: string; visualState: string }) => void,
     ) => () => void;

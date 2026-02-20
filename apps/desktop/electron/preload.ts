@@ -61,6 +61,9 @@ export interface JamAPI {
     onDeleted: (
       callback: (data: { agentId: string }) => void,
     ) => () => void;
+    onUpdated: (
+      callback: (data: { agentId: string; profile: Record<string, unknown> }) => void,
+    ) => () => void;
     onVisualStateChange: (
       callback: (data: { agentId: string; visualState: string }) => void,
     ) => () => void;
@@ -254,6 +257,7 @@ contextBridge.exposeInMainWorld('jam', {
       createEventListener('agents:statusChange', cb),
     onCreated: (cb) => createEventListener('agents:created', cb),
     onDeleted: (cb) => createEventListener('agents:deleted', cb),
+    onUpdated: (cb) => createEventListener('agents:updated', cb),
     onVisualStateChange: (cb) =>
       createEventListener('agents:visualStateChange', cb),
   },

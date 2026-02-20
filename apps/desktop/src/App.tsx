@@ -137,6 +137,7 @@ export default function App() {
   const addAgent = useAppStore((s) => s.addAgent);
   const removeAgent = useAppStore((s) => s.removeAgent);
   const updateAgentStatus = useAppStore((s) => s.updateAgentStatus);
+  const updateAgentProfile = useAppStore((s) => s.updateAgentProfile);
   const updateAgentVisualState = useAppStore((s) => s.updateAgentVisualState);
   const appendTerminalData = useAppStore((s) => s.appendTerminalData);
   const setTranscript = useAppStore((s) => s.setTranscript);
@@ -207,6 +208,10 @@ export default function App() {
 
     const unsubDeleted = window.jam.agents.onDeleted(({ agentId }) => {
       removeAgent(agentId);
+    });
+
+    const unsubUpdated = window.jam.agents.onUpdated(({ agentId, profile }) => {
+      updateAgentProfile(agentId, profile as AgentEntry['profile']);
     });
 
     const unsubVisualState = window.jam.agents.onVisualStateChange(
@@ -328,6 +333,7 @@ export default function App() {
       unsubStatusChange();
       unsubCreated();
       unsubDeleted();
+      unsubUpdated();
       unsubVisualState();
       unsubTerminalData();
       unsubTranscription();
@@ -348,6 +354,7 @@ export default function App() {
     addAgent,
     removeAgent,
     updateAgentStatus,
+    updateAgentProfile,
     updateAgentVisualState,
     appendTerminalData,
     setTranscript,
