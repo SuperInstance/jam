@@ -116,7 +116,23 @@ yarn typecheck && info "Typecheck passed" || warn "Typecheck had issues (non-blo
 echo ""
 echo -e "${GREEN}Setup complete!${NC}"
 echo ""
-echo "  Start developing:  yarn dev"
+
+# Check if the user's current shell has the wrong Node version
+CURRENT_NODE=$(node -e "console.log(process.versions.node.split('.')[0])" 2>/dev/null || echo "0")
+if [ "$CURRENT_NODE" -lt "$REQUIRED_NODE" ] 2>/dev/null; then
+  echo -e "${YELLOW}NOTE:${NC} This script switched Node inside a subshell."
+  echo -e "      Your terminal is still on Node $CURRENT_NODE."
+  echo ""
+  echo "  Run this once to make Node $REQUIRED_NODE your default:"
+  echo ""
+  echo -e "    ${CYAN}nvm alias default $REQUIRED_NODE && nvm use $REQUIRED_NODE${NC}"
+  echo ""
+  echo "  Then start developing:"
+  echo ""
+  echo -e "    ${CYAN}yarn dev${NC}"
+else
+  echo "  Start developing:  yarn dev"
+fi
 echo "  Run typecheck:     yarn typecheck"
 echo "  Build desktop:     yarn workspace @jam/desktop electron:build"
 echo ""
