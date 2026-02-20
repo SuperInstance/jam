@@ -642,7 +642,7 @@ __metadata:
     "@xterm/xterm": "npm:^5.5.0"
     autoprefixer: "npm:^10.4.17"
     concurrently: "npm:^8.2.2"
-    electron: "npm:^40.2.1"
+    electron: "npm:40.4.1"
     electron-builder: "npm:^26.7.0"
     electron-store: "npm:^8.1.0"
     motion: "npm:^12.0.0"
@@ -2541,7 +2541,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"electron@npm:^40.2.1":
+"electron@npm:40.4.1":
   version: 40.4.1
   resolution: "electron@npm:40.4.1"
   dependencies:
