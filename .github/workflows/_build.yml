@@ -14,6 +14,10 @@ on:
         required: false
         type: string
         default: ''
+      sign:
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -61,25 +65,32 @@ jobs:
 
       # macOS: Write the App Store Connect API key to disk for notarization
       - name: Prepare macOS signing
-        if: matrix.platform == 'mac' && env.APPLE_API_KEY != ''
+        if: matrix.platform == 'mac' && inputs.sign
         env:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
         run: |
           mkdir -p ~/private_keys
           echo "$APPLE_API_KEY" | base64 --decode > ~/private_keys/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8
 
-      - name: Build
-        run: yarn workspace @jam/desktop electron:build
+      # Signed build (release) — includes code signing + notarization
+      - name: Build (signed)
+        if: inputs.sign
+        run: yarn workspace @jam/desktop electron:build --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS code signing (electron-builder reads these automatically)
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          # macOS notarization (App Store Connect API)
           APPLE_API_KEY: ~/private_keys/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      # Unsigned build (staging) — fast, no notarization wait
+      - name: Build (unsigned)
+        if: ${{ !inputs.sign }}
+        run: yarn workspace @jam/desktop electron:build --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

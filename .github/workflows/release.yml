@@ -44,6 +44,7 @@ jobs:
       environment: production
       artifact-prefix: release-
       version: ${{ needs.version.outputs.version }}
+      sign: true
     secrets: inherit
 
   publish:
