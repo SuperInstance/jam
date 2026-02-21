@@ -12,7 +12,11 @@
 
 ## Preview
 
-<video src="https://youtu.be/sXrvp5j5U6s" controls></video>
+<p align="center">
+  <a href="https://youtu.be/sXrvp5j5U6s">
+    <img src="https://img.youtube.com/vi/sXrvp5j5U6s/maxresdefault.jpg" alt="Jam Preview" width="600" />
+  </a>
+</p>
 
 ## Quick Start
 
