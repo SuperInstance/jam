@@ -8,6 +8,8 @@ import {
   RuntimeRegistry,
   ClaudeCodeRuntime,
   OpenCodeRuntime,
+  CodexCLIRuntime,
+  CursorRuntime,
 } from '@jam/agent-runtime';
 import {
   VoiceService,
@@ -65,6 +67,8 @@ export class Orchestrator {
     // Register runtimes
     this.runtimeRegistry.register(new ClaudeCodeRuntime());
     this.runtimeRegistry.register(new OpenCodeRuntime());
+    this.runtimeRegistry.register(new CodexCLIRuntime());
+    this.runtimeRegistry.register(new CursorRuntime());
 
     // Create agent manager
     this.agentManager = new AgentManager(

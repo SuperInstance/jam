@@ -270,6 +270,11 @@ function createTray(): void {
 
 // --- IPC Handlers ---
 function registerIpcHandlers(): void {
+  // Runtime metadata (data-driven UI)
+  ipcMain.handle('runtimes:listMetadata', () =>
+    orchestrator.runtimeRegistry.listMetadata(),
+  );
+
   // Agent management
   ipcMain.handle('agents:create', (_, profile) =>
     orchestrator.agentManager.create(profile),
@@ -287,10 +292,13 @@ function registerIpcHandlers(): void {
     orchestrator.agentManager.get(agentId) ?? null,
   );
   ipcMain.handle('agents:start', (_, agentId) => {
-    // Pre-accept the --dangerously-skip-permissions prompt for Claude Code agents
+    // Pre-accept permission prompts for runtimes that support full access mode
     const agent = orchestrator.agentManager.get(agentId);
-    if (agent?.profile.runtime === 'claude-code' && agent.profile.allowFullAccess) {
-      ensureClaudePermissionAccepted();
+    if (agent?.profile.allowFullAccess) {
+      const rt = orchestrator.runtimeRegistry.get(agent.profile.runtime);
+      if (rt?.metadata.supportsFullAccess) {
+        ensureClaudePermissionAccepted();
+      }
     }
     return orchestrator.agentManager.start(agentId);
   });
@@ -806,7 +814,6 @@ function registerIpcHandlers(): void {
   // Setup / Onboarding
   ipcMain.handle('setup:detectRuntimes', () => {
     const homedir = process.env.HOME || '';
-    const fs = require('node:fs');
 
     // Check the Node.js version that agents will actually use.
     // PTY spawns use -c (not login shell), so they inherit the Electron
@@ -835,10 +842,8 @@ function registerIpcHandlers(): void {
       authHint: string;
     }> = [];
 
-    for (const [id, name, cmd] of [
-      ['claude-code', 'Claude Code', 'claude'],
-      ['opencode', 'OpenCode', 'opencode'],
-    ] as const) {
+    for (const rt of orchestrator.runtimeRegistry.list()) {
+      const { metadata } = rt;
       let available = false;
       let authenticated = false;
       let version = '';
@@ -847,7 +852,7 @@ function registerIpcHandlers(): void {
 
       // Check binary exists AND works by running --version
       try {
-        const verOutput = execSync(`${cmd} --version 2>/dev/null || command -v ${cmd}`, {
+        const verOutput = execSync(`${metadata.cliCommand} --version 2>/dev/null || command -v ${metadata.cliCommand}`, {
           encoding: 'utf-8',
           timeout: 10000,
         }).trim();
@@ -862,41 +867,26 @@ function registerIpcHandlers(): void {
       }
 
       if (available) {
-        // Claude Code v2+ requires Node.js 20.12+
-        if (id === 'claude-code' && nodeMajor > 0 && nodeMajor < 20) {
-          error = `Requires Node.js 20+, but found v${nodeVersion}. Install Node 22+: nvm install 22`;
+        // Check Node.js version requirement
+        if (metadata.nodeVersionRequired && nodeMajor > 0 && nodeMajor < metadata.nodeVersionRequired) {
+          error = `Requires Node.js ${metadata.nodeVersionRequired}+, but found v${nodeVersion}. Install Node 22+: nvm install 22`;
         }
 
-        if (id === 'claude-code') {
-          // Claude Code stores OAuth tokens in the system keychain after login.
-          // settings.json is for user prefs (we may create it ourselves), so check
-          // for files that only exist after a real interactive session:
-          const claudeDir = `${homedir}/.claude`;
-          authenticated = fs.existsSync(`${claudeDir}/statsCache`) ||
-            fs.existsSync(`${claudeDir}/stats-cache.json`) ||
-            (fs.existsSync(`${claudeDir}/projects`) &&
-              fs.readdirSync(`${claudeDir}/projects`).length > 0);
-          authHint = 'Run "claude" in your terminal to authenticate via browser';
-        } else if (id === 'opencode') {
-          authenticated = fs.existsSync(`${homedir}/.opencode/config.json`);
-          authHint = 'Run "opencode" in your terminal to configure';
-        }
+        authenticated = metadata.detectAuth(homedir);
+        authHint = metadata.getAuthHint();
       } else {
-        if (id === 'claude-code') {
-          authHint = 'npm install -g @anthropic-ai/claude-code';
-        } else {
-          authHint = 'See opencode.ai for installation';
-        }
+        authHint = metadata.installHint;
       }
 
-      runtimes.push({ id, name, available, authenticated, version, nodeVersion, error, authHint });
+      runtimes.push({ id: metadata.id, name: metadata.displayName, available, authenticated, version, nodeVersion, error, authHint });
     }
     return runtimes;
   });
 
   // Quick diagnostic: spawn the CLI and capture first output to check if it works
   ipcMain.handle('setup:testRuntime', async (_, runtimeId: string) => {
-    const cmd = runtimeId === 'claude-code' ? 'claude' : 'opencode';
+    const rt = orchestrator.runtimeRegistry.get(runtimeId);
+    const cmd = rt?.metadata.cliCommand ?? runtimeId;
     try {
       // Run a quick print command that requires auth — captures stderr too
       const output = execSync(
@@ -945,7 +935,7 @@ function registerIpcHandlers(): void {
 
     // Detect runtimes
     let hasRuntime = false;
-    for (const cmd of ['claude', 'opencode']) {
+    for (const cmd of orchestrator.runtimeRegistry.getCliCommands()) {
       try {
         execSync(`command -v ${cmd}`, { encoding: 'utf-8', timeout: 3000 });
         hasRuntime = true;
@@ -1015,11 +1005,13 @@ app.whenReady().then(() => {
   // Start health checks
   orchestrator.agentManager.startHealthCheck();
 
-  // Pre-accept Claude Code permission prompt for any agents that need it
-  const hasClaudeAgent = orchestrator.agentManager.list().some(
-    a => a.profile.runtime === 'claude-code' && a.profile.allowFullAccess && a.profile.autoStart,
-  );
-  if (hasClaudeAgent) {
+  // Pre-accept permission prompts for runtimes that support full access mode
+  const needsPermissionSetup = orchestrator.agentManager.list().some((a) => {
+    if (!a.profile.allowFullAccess || !a.profile.autoStart) return false;
+    const rt = orchestrator.runtimeRegistry.get(a.profile.runtime);
+    return rt?.metadata.supportsFullAccess;
+  });
+  if (needsPermissionSetup) {
     ensureClaudePermissionAccepted();
   }
 

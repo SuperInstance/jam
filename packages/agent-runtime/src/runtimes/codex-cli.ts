@@ -13,51 +13,52 @@ import type {
 import { createLogger } from '@jam/core';
 import { stripAnsiSimple, buildCleanEnv } from '../utils.js';
 
-const log = createLogger('OpenCodeRuntime');
+const log = createLogger('CodexCLIRuntime');
 
-export class OpenCodeRuntime implements IAgentRuntime {
-  readonly runtimeId = 'opencode';
+export class CodexCLIRuntime implements IAgentRuntime {
+  readonly runtimeId = 'codex';
 
   readonly metadata: RuntimeMetadata = {
-    id: 'opencode',
-    displayName: 'OpenCode',
-    cliCommand: 'opencode',
-    installHint: 'See opencode.ai for installation',
+    id: 'codex',
+    displayName: 'Codex CLI',
+    cliCommand: 'codex',
+    installHint: 'npm install -g @openai/codex',
     models: [
-      { id: 'claude-opus-4-6', label: 'Claude Opus 4.6', group: 'Anthropic' },
-      { id: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5', group: 'Anthropic' },
-      { id: 'gpt-4o', label: 'GPT-4o', group: 'OpenAI' },
-      { id: 'gpt-4o-mini', label: 'GPT-4o Mini', group: 'OpenAI' },
+      { id: 'gpt-4.1', label: 'GPT-4.1', group: 'OpenAI' },
       { id: 'o3', label: 'o3', group: 'OpenAI' },
-      { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', group: 'Google' },
-      { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', group: 'Google' },
+      { id: 'o4-mini', label: 'o4-mini', group: 'OpenAI' },
+      { id: 'codex-mini-latest', label: 'Codex Mini', group: 'OpenAI' },
     ],
     detectAuth(homedir: string): boolean {
-      return existsSync(`${homedir}/.opencode/config.json`);
+      return existsSync(`${homedir}/.codex/config.toml`) ||
+        !!process.env.OPENAI_API_KEY;
     },
-    getAuthHint: () => 'Run "opencode" in your terminal to configure',
+    getAuthHint: () => 'Set OPENAI_API_KEY or run "codex" to configure',
   };
 
   buildSpawnConfig(profile: AgentProfile): SpawnConfig {
     const args: string[] = [];
-    const env: Record<string, string> = {};
 
     if (profile.model) {
-      env.OPENCODE_MODEL = profile.model;
+      args.push('--model', profile.model);
     }
 
     return {
-      command: 'opencode',
+      command: 'codex',
       args,
-      env,
+      env: {},
     };
   }
 
   parseOutput(raw: string): AgentOutput {
     const cleaned = stripAnsiSimple(raw);
 
-    if (cleaned.includes('executing') || cleaned.includes('running')) {
+    if (cleaned.includes('executing') || cleaned.includes('Running') || cleaned.includes('shell')) {
       return { type: 'tool-use', content: cleaned.trim(), raw };
+    }
+
+    if (cleaned.includes('Thinking') || cleaned.includes('thinking')) {
+      return { type: 'thinking', content: cleaned.trim(), raw };
     }
 
     return { type: 'text', content: cleaned.trim(), raw };
@@ -67,42 +68,37 @@ export class OpenCodeRuntime implements IAgentRuntime {
     let input = text;
 
     if (context?.sharedContext) {
-      input = `[Shared context: ${context.sharedContext}]\n\n${input}`;
+      input = `[Context from other agents: ${context.sharedContext}]\n\n${input}`;
     }
 
     return input;
   }
 
   async execute(profile: AgentProfile, text: string, options?: ExecutionOptions): Promise<ExecutionResult> {
-    const runtimeEnv: Record<string, string> = {};
-    if (profile.model) {
-      runtimeEnv.OPENCODE_MODEL = profile.model;
-    }
+    const env = buildCleanEnv({ ...options?.env });
 
-    const env = buildCleanEnv({ ...runtimeEnv, ...options?.env });
-
-    log.info(`Executing: opencode run <<< "${text.slice(0, 60)}"`, undefined, profile.id);
+    log.info(`Executing: codex exec <<< "${text.slice(0, 60)}"`, undefined, profile.id);
 
     return new Promise((resolve) => {
-      const child = spawn('opencode', ['run'], {
+      const args = ['exec'];
+
+      if (profile.model) {
+        args.push('--model', profile.model);
+      }
+
+      args.push(text);
+
+      const child = spawn('codex', args, {
         cwd: options?.cwd ?? profile.cwd ?? process.env.HOME ?? '/',
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
-
-      // Pipe text via stdin — use enriched prompt directly if present (from AgentContextBuilder)
-      const stdinText = profile.systemPrompt
-        ? `[${profile.systemPrompt}]\n\n${text}`
-        : `[You are ${profile.name}. When asked who you are, respond as ${profile.name}.]\n\n${text}`;
-      child.stdin.write(stdinText);
-      child.stdin.end();
 
       let stdout = '';
       let stderr = '';
       let lastProgressEmit = 0;
       let firstChunkSent = false;
 
-      // Abort signal support
       if (options?.signal) {
         options.signal.addEventListener('abort', () => {
           child.kill('SIGTERM');
@@ -113,9 +109,7 @@ export class OpenCodeRuntime implements IAgentRuntime {
         const chunkStr = chunk.toString();
         stdout += chunkStr;
 
-        // Emit throttled progress events from raw output
         if (options?.onProgress) {
-          // Emit immediately on first output so status isn't stuck on "initializing"
           if (!firstChunkSent) {
             firstChunkSent = true;
             lastProgressEmit = Date.now();
@@ -127,7 +121,7 @@ export class OpenCodeRuntime implements IAgentRuntime {
             lastProgressEmit = now;
             const cleaned = stripAnsiSimple(chunkStr).trim();
             if (cleaned.length > 0) {
-              const type = cleaned.includes('executing') || cleaned.includes('running')
+              const type = cleaned.includes('executing') || cleaned.includes('Running') || cleaned.includes('shell')
                 ? 'tool-use' as const
                 : 'text' as const;
               options.onProgress({ type, summary: cleaned.slice(0, 80) });
@@ -148,7 +142,6 @@ export class OpenCodeRuntime implements IAgentRuntime {
           return;
         }
 
-        // Strip ANSI and return
         const cleaned = stripAnsiSimple(stdout).trim();
         log.info(`Execute complete: ${cleaned.length} chars`, undefined, profile.id);
         resolve({ success: true, text: cleaned });

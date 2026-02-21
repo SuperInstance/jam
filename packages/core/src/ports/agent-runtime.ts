@@ -41,8 +41,41 @@ export interface ExecutionOptions {
   onProgress?: (event: ExecutionProgress) => void;
 }
 
+/** Model option available for a runtime */
+export interface RuntimeModel {
+  id: string;
+  label: string;
+  group: string;
+}
+
+/** Self-describing metadata for a runtime — used by UI, onboarding, and setup detection */
+export interface RuntimeMetadata {
+  id: string;
+  displayName: string;
+  cliCommand: string;
+  installHint: string;
+  models: RuntimeModel[];
+  supportsFullAccess?: boolean;
+  nodeVersionRequired?: number;
+  detectAuth(homedir: string): boolean;
+  getAuthHint(): string;
+}
+
+/** Serializable subset of RuntimeMetadata (no functions) for IPC transport */
+export interface SerializedRuntimeMetadata {
+  id: string;
+  displayName: string;
+  cliCommand: string;
+  installHint: string;
+  models: RuntimeModel[];
+  supportsFullAccess?: boolean;
+  nodeVersionRequired?: number;
+  authHint: string;
+}
+
 export interface IAgentRuntime {
   readonly runtimeId: string;
+  readonly metadata: RuntimeMetadata;
 
   /** Build config for spawning an interactive PTY session */
   buildSpawnConfig(profile: AgentProfile): SpawnConfig;

@@ -1,4 +1,4 @@
-import type { IAgentRuntime } from '@jam/core';
+import type { IAgentRuntime, SerializedRuntimeMetadata } from '@jam/core';
 
 export class RuntimeRegistry {
   private runtimes = new Map<string, IAgentRuntime>();
@@ -17,5 +17,24 @@ export class RuntimeRegistry {
 
   has(runtimeId: string): boolean {
     return this.runtimes.has(runtimeId);
+  }
+
+  /** Serializable metadata for all runtimes (safe for IPC transport) */
+  listMetadata(): SerializedRuntimeMetadata[] {
+    return this.list().map((r) => ({
+      id: r.metadata.id,
+      displayName: r.metadata.displayName,
+      cliCommand: r.metadata.cliCommand,
+      installHint: r.metadata.installHint,
+      models: r.metadata.models,
+      supportsFullAccess: r.metadata.supportsFullAccess,
+      nodeVersionRequired: r.metadata.nodeVersionRequired,
+      authHint: r.metadata.getAuthHint(),
+    }));
+  }
+
+  /** All CLI commands registered (for setup status detection) */
+  getCliCommands(): string[] {
+    return this.list().map((r) => r.metadata.cliCommand);
   }
 }

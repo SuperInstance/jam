@@ -4,11 +4,6 @@ const AGENT_COLORS = [
   '#3b82f6', '#8b5cf6', '#22c55e', '#f97316', '#ec4899', '#06b6d4',
 ];
 
-const RUNTIMES = [
-  { id: 'claude-code', label: 'Claude Code' },
-  { id: 'opencode', label: 'OpenCode' },
-];
-
 type TTSProvider = 'openai' | 'elevenlabs';
 
 const TTS_VOICES: Record<TTSProvider, Array<{ id: string; label: string }>> = {
@@ -43,25 +38,11 @@ const TTS_VOICES: Record<TTSProvider, Array<{ id: string; label: string }>> = {
   ],
 };
 
-const MODELS_BY_RUNTIME: Record<string, Array<{ id: string; label: string; group: string }>> = {
-  'claude-code': [
-    { id: 'claude-opus-4-6', label: 'Claude Opus 4.6', group: 'Claude 4' },
-    { id: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5', group: 'Claude 4' },
-    { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5', group: 'Claude 4' },
-    { id: 'opus', label: 'Opus (latest)', group: 'Aliases' },
-    { id: 'sonnet', label: 'Sonnet (latest)', group: 'Aliases' },
-    { id: 'haiku', label: 'Haiku (latest)', group: 'Aliases' },
-  ],
-  opencode: [
-    { id: 'claude-opus-4-6', label: 'Claude Opus 4.6', group: 'Anthropic' },
-    { id: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5', group: 'Anthropic' },
-    { id: 'gpt-4o', label: 'GPT-4o', group: 'OpenAI' },
-    { id: 'gpt-4o-mini', label: 'GPT-4o Mini', group: 'OpenAI' },
-    { id: 'o3', label: 'o3', group: 'OpenAI' },
-    { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', group: 'Google' },
-    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', group: 'Google' },
-  ],
-};
+export interface RuntimeMetadataInfo {
+  id: string;
+  displayName: string;
+  models: Array<{ id: string; label: string; group: string }>;
+}
 
 export interface AgentFormValues {
   id?: string;
@@ -81,13 +62,18 @@ interface AgentConfigFormProps {
   onSubmit: (profile: Record<string, unknown>) => void;
   onCancel: () => void;
   initialValues?: AgentFormValues;
+  runtimes?: RuntimeMetadataInfo[];
 }
 
 export const AgentConfigForm: React.FC<AgentConfigFormProps> = ({
   onSubmit,
   onCancel,
   initialValues,
+  runtimes: runtimesProp,
 }) => {
+  const availableRuntimes = runtimesProp ?? [
+    { id: 'claude-code', displayName: 'Claude Code', models: [] },
+  ];
   const isEditing = !!initialValues?.id;
 
   const [name, setName] = useState(initialValues?.name ?? '');
@@ -123,7 +109,8 @@ export const AgentConfigForm: React.FC<AgentConfigFormProps> = ({
   }, [initialValues?.voice?.ttsVoiceId]);
 
   const voices = TTS_VOICES[ttsProvider] || [];
-  const models = MODELS_BY_RUNTIME[runtime] || [];
+  const currentRuntime = availableRuntimes.find((r) => r.id === runtime);
+  const models = currentRuntime?.models ?? [];
 
   // Group models by their group label
   const modelGroups = models.reduce<Record<string, typeof models>>((acc, m) => {
@@ -177,9 +164,9 @@ export const AgentConfigForm: React.FC<AgentConfigFormProps> = ({
           }}
           className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-blue-500"
         >
-          {RUNTIMES.map((r) => (
+          {availableRuntimes.map((r) => (
             <option key={r.id} value={r.id}>
-              {r.label}
+              {r.displayName}
             </option>
           ))}
         </select>

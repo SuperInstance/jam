@@ -43,19 +43,12 @@ const TTS_VOICES: Record<TTSProvider, Array<{ id: string; label: string }>> = {
   ],
 };
 
-const MODELS_BY_RUNTIME: Record<string, Array<{ id: string; label: string }>> = {
-  'claude-code': [
-    { id: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
-    { id: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5' },
-    { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
-  ],
-  opencode: [
-    { id: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
-    { id: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5' },
-    { id: 'gpt-4o', label: 'GPT-4o' },
-    { id: 'o3', label: 'o3' },
-  ],
-};
+interface RuntimeMetadataItem {
+  id: string;
+  displayName: string;
+  cliCommand: string;
+  models: Array<{ id: string; label: string; group: string }>;
+}
 
 const STEPS: OnboardingStep[] = ['welcome', 'runtimes', 'voice', 'agent', 'done'];
 
@@ -134,12 +127,19 @@ const RuntimesStep: React.FC<{ onNext: () => void; onPrev: () => void }> = ({ on
   const [loading, setLoading] = useState(true);
   const [testResult, setTestResult] = useState<{ runtimeId: string; success: boolean; output: string } | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
+  const [cliCommands, setCliCommands] = useState<Record<string, string>>({});
 
   const refresh = () => {
     setLoading(true);
     setTestResult(null);
-    window.jam.setup.detectRuntimes().then((r) => {
-      setRuntimes(r);
+    Promise.all([
+      window.jam.setup.detectRuntimes(),
+      window.jam.runtimes.listMetadata(),
+    ]).then(([detected, meta]) => {
+      setRuntimes(detected);
+      const cmds: Record<string, string> = {};
+      for (const m of meta) cmds[m.id] = m.cliCommand;
+      setCliCommands(cmds);
       setLoading(false);
     });
   };
@@ -151,7 +151,7 @@ const RuntimesStep: React.FC<{ onNext: () => void; onPrev: () => void }> = ({ on
   const needsAuth = hasAnyRuntime && !hasAuthedRuntime;
 
   const handleOpenTerminal = (r: RuntimeInfo) => {
-    const cmd = r.id === 'claude-code' ? 'claude' : 'opencode';
+    const cmd = cliCommands[r.id] ?? r.id;
     window.jam.setup.openTerminal(cmd);
   };
 
@@ -197,7 +197,7 @@ const RuntimesStep: React.FC<{ onNext: () => void; onPrev: () => void }> = ({ on
                 <div>
                   <div className="text-sm font-medium text-zinc-200">{r.name}</div>
                   <div className="text-xs text-zinc-500">
-                    {r.id === 'claude-code' ? 'claude CLI' : 'opencode CLI'}
+                    {cliCommands[r.id] ?? r.id} CLI
                     {r.version && ` v${r.version}`}
                     {r.nodeVersion && ` (Node ${r.nodeVersion})`}
                   </div>
@@ -400,6 +400,7 @@ const AgentStep: React.FC<{ onNext: () => void; onPrev: () => void }> = ({ onNex
   const [ttsProvider, setTtsProvider] = useState<TTSProvider>('openai');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [runtimeMeta, setRuntimeMeta] = useState<RuntimeMetadataItem[]>([]);
 
   useEffect(() => {
     window.jam.config.get().then((c) => {
@@ -407,10 +408,12 @@ const AgentStep: React.FC<{ onNext: () => void; onPrev: () => void }> = ({ onNex
       setTtsProvider(provider);
       setTtsVoiceId((c.ttsVoice as string) || TTS_VOICES[provider][0]?.id || 'alloy');
     });
+    window.jam.runtimes.listMetadata().then(setRuntimeMeta);
   }, []);
 
   const voices = TTS_VOICES[ttsProvider] || [];
-  const models = MODELS_BY_RUNTIME[runtime] || [];
+  const currentRuntime = runtimeMeta.find((r) => r.id === runtime);
+  const models = currentRuntime?.models ?? [];
 
   const handleCreate = async () => {
     if (!name.trim()) return;
@@ -472,8 +475,9 @@ const AgentStep: React.FC<{ onNext: () => void; onPrev: () => void }> = ({ onNex
             onChange={(e) => { setRuntime(e.target.value); setModel(''); }}
             className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-blue-500"
           >
-            <option value="claude-code">Claude Code</option>
-            <option value="opencode">OpenCode</option>
+            {runtimeMeta.map((r) => (
+              <option key={r.id} value={r.id}>{r.displayName}</option>
+            ))}
           </select>
         </div>
 
@@ -485,7 +489,7 @@ const AgentStep: React.FC<{ onNext: () => void; onPrev: () => void }> = ({ onNex
             className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-blue-500"
           >
             <option value="">Default</option>
-            {models.map((m) => (
+            {models.map((m: { id: string; label: string }) => (
               <option key={m.id} value={m.id}>{m.label}</option>
             ))}
           </select>

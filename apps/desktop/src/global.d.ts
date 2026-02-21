@@ -1,4 +1,17 @@
 export interface JamAPI {
+  runtimes: {
+    listMetadata: () => Promise<Array<{
+      id: string;
+      displayName: string;
+      cliCommand: string;
+      installHint: string;
+      models: Array<{ id: string; label: string; group: string }>;
+      supportsFullAccess?: boolean;
+      nodeVersionRequired?: number;
+      authHint: string;
+    }>>;
+  };
+
   agents: {
     create: (
       profile: Record<string, unknown>,

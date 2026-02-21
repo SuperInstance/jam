@@ -156,6 +156,7 @@ export const SettingsContainer: React.FC<{
   const [hasElevenlabs, setHasElevenlabs] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [runtimeOptions, setRuntimeOptions] = useState<Array<{ id: string; displayName: string }>>([]);
 
   useEffect(() => {
     window.jam.config.get().then((c) => {
@@ -167,6 +168,9 @@ export const SettingsContainer: React.FC<{
     });
     window.jam.apiKeys.has('openai').then(setHasOpenai);
     window.jam.apiKeys.has('elevenlabs').then(setHasElevenlabs);
+    window.jam.runtimes.listMetadata().then((meta) => {
+      setRuntimeOptions(meta.map((r) => ({ id: r.id, displayName: r.displayName })));
+    });
   }, []);
 
   const needsOpenai =
@@ -473,8 +477,9 @@ export const SettingsContainer: React.FC<{
                 onChange={(e) => setConfig({ ...config, defaultRuntime: e.target.value })}
                 className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-blue-500"
               >
-                <option value="claude-code">Claude Code</option>
-                <option value="opencode">OpenCode</option>
+                {runtimeOptions.map((r) => (
+                  <option key={r.id} value={r.id}>{r.displayName}</option>
+                ))}
               </select>
             </div>
           </div>

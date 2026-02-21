@@ -11,6 +11,19 @@ function createEventListener<T>(
 }
 
 export interface JamAPI {
+  runtimes: {
+    listMetadata: () => Promise<Array<{
+      id: string;
+      displayName: string;
+      cliCommand: string;
+      installHint: string;
+      models: Array<{ id: string; label: string; group: string }>;
+      supportsFullAccess?: boolean;
+      nodeVersionRequired?: number;
+      authHint: string;
+    }>>;
+  };
+
   agents: {
     create: (
       profile: Record<string, unknown>,
@@ -241,6 +254,10 @@ export interface JamAPI {
 }
 
 contextBridge.exposeInMainWorld('jam', {
+  runtimes: {
+    listMetadata: () => ipcRenderer.invoke('runtimes:listMetadata'),
+  },
+
   agents: {
     create: (profile) => ipcRenderer.invoke('agents:create', profile),
     update: (agentId, updates) =>

@@ -16,7 +16,7 @@ export interface JamConfig {
   sttModel: string;
   ttsVoice: string;
   defaultModel: string;
-  defaultRuntime: 'claude-code' | 'opencode';
+  defaultRuntime: string;
   theme: 'dark' | 'light';
   // Voice filtering
   voiceSensitivity: VoiceSensitivity;

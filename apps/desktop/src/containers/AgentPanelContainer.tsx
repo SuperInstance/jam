@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAppStore } from '@/store';
 import { useOrchestrator } from '@/hooks/useOrchestrator';
 import { AgentCard } from '@/components/agent/AgentCard';
-import { AgentConfigForm, type AgentFormValues } from '@/components/agent/AgentConfigForm';
+import { AgentConfigForm, type AgentFormValues, type RuntimeMetadataInfo } from '@/components/agent/AgentConfigForm';
 import type { AgentVisualState } from '@/store/agentSlice';
 
 type FormMode = { type: 'closed' } | { type: 'create' } | { type: 'edit'; agentId: string };
@@ -12,6 +12,13 @@ export const AgentPanelContainer: React.FC = () => {
   const { selectedAgentId, selectAgent, startAgent, stopAgent, deleteAgent, createAgent, updateAgent } =
     useOrchestrator();
   const [formMode, setFormMode] = useState<FormMode>({ type: 'closed' });
+  const [runtimes, setRuntimes] = useState<RuntimeMetadataInfo[]>([]);
+
+  useEffect(() => {
+    window.jam.runtimes.listMetadata().then((data) => {
+      setRuntimes(data.map((r) => ({ id: r.id, displayName: r.displayName, models: r.models })));
+    });
+  }, []);
 
   const handleCreate = async (profile: Record<string, unknown>) => {
     const result = await createAgent(profile);
@@ -56,6 +63,7 @@ export const AgentPanelContainer: React.FC = () => {
           onSubmit={formMode.type === 'edit' ? handleUpdate : handleCreate}
           onCancel={() => setFormMode({ type: 'closed' })}
           initialValues={editInitialValues}
+          runtimes={runtimes}
         />
       ) : (
         <>

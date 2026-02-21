@@ -4,6 +4,8 @@ export { AgentContextBuilder } from './agent-context-builder.js';
 export { RuntimeRegistry } from './runtime-registry.js';
 export { ClaudeCodeRuntime } from './runtimes/claude-code.js';
 export { OpenCodeRuntime } from './runtimes/opencode.js';
+export { CodexCLIRuntime } from './runtimes/codex-cli.js';
+export { CursorRuntime } from './runtimes/cursor.js';
 export { TaskTracker } from './task-tracker.js';
 
 export type { PtyInstance, PtyOutputHandler, PtyExitHandler } from './pty-manager.js';

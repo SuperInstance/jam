@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import type {
   IAgentRuntime,
   SpawnConfig,
@@ -13,69 +13,58 @@ import type {
 import { createLogger } from '@jam/core';
 import { stripAnsiSimple, buildCleanEnv } from '../utils.js';
 
-const log = createLogger('ClaudeCodeRuntime');
+const log = createLogger('CursorRuntime');
 
-export class ClaudeCodeRuntime implements IAgentRuntime {
-  readonly runtimeId = 'claude-code';
+export class CursorRuntime implements IAgentRuntime {
+  readonly runtimeId = 'cursor';
 
   readonly metadata: RuntimeMetadata = {
-    id: 'claude-code',
-    displayName: 'Claude Code',
-    cliCommand: 'claude',
-    installHint: 'npm install -g @anthropic-ai/claude-code',
-    supportsFullAccess: true,
-    nodeVersionRequired: 20,
+    id: 'cursor',
+    displayName: 'Cursor',
+    cliCommand: 'cursor-agent',
+    installHint: 'curl https://cursor.com/install -fsS | bash',
     models: [
-      { id: 'claude-opus-4-6', label: 'Claude Opus 4.6', group: 'Claude 4' },
-      { id: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5', group: 'Claude 4' },
-      { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5', group: 'Claude 4' },
-      { id: 'opus', label: 'Opus (latest)', group: 'Aliases' },
-      { id: 'sonnet', label: 'Sonnet (latest)', group: 'Aliases' },
-      { id: 'haiku', label: 'Haiku (latest)', group: 'Aliases' },
+      { id: 'auto', label: 'Auto', group: 'Cursor' },
+      { id: 'composer-1.5', label: 'Composer 1.5', group: 'Cursor' },
+      { id: 'composer-1', label: 'Composer 1', group: 'Cursor' },
+      { id: 'opus-4.6-thinking', label: 'Opus 4.6 Thinking', group: 'Anthropic' },
+      { id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex', group: 'OpenAI' },
+      { id: 'gpt-5.3-codex-fast', label: 'GPT-5.3 Codex Fast', group: 'OpenAI' },
+      { id: 'gpt-5.2', label: 'GPT-5.2', group: 'OpenAI' },
+      { id: 'gpt-5.2-codex', label: 'GPT-5.2 Codex', group: 'OpenAI' },
+      { id: 'gpt-5.1-codex-max', label: 'GPT-5.1 Codex Max', group: 'OpenAI' },
     ],
     detectAuth(homedir: string): boolean {
-      const claudeDir = `${homedir}/.claude`;
-      return existsSync(`${claudeDir}/statsCache`) ||
-        existsSync(`${claudeDir}/stats-cache.json`) ||
-        (existsSync(`${claudeDir}/projects`) &&
-          readdirSync(`${claudeDir}/projects`).length > 0);
+      return !!process.env.CURSOR_API_KEY ||
+        existsSync(`${homedir}/.cursor/cli-config.json`);
     },
-    getAuthHint: () => 'Run "claude" in your terminal to authenticate via browser',
+    supportsFullAccess: true,
+    getAuthHint: () => 'Run "cursor-agent" in your terminal to authenticate',
   };
 
   buildSpawnConfig(profile: AgentProfile): SpawnConfig {
     const args: string[] = [];
 
-    if (profile.allowFullAccess) {
-      args.push('--dangerously-skip-permissions');
-    }
-
+    // Note: --trust is only valid with -p/headless mode, not interactive PTY
     if (profile.model) {
       args.push('--model', profile.model);
     }
 
-    const systemPrompt = this.buildSystemPrompt(profile);
-    if (systemPrompt) {
-      args.push('--system-prompt', systemPrompt);
-    }
-
     return {
-      command: 'claude',
+      command: 'cursor-agent',
       args,
-      env: {
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-      },
+      env: {},
     };
   }
 
   parseOutput(raw: string): AgentOutput {
     const cleaned = stripAnsiSimple(raw);
 
-    if (cleaned.includes('Tool use:') || cleaned.includes('Running:')) {
+    if (cleaned.includes('Tool:') || cleaned.includes('Running') || cleaned.includes('executing')) {
       return { type: 'tool-use', content: cleaned.trim(), raw };
     }
 
-    if (cleaned.includes('Thinking...') || cleaned.includes('thinking')) {
+    if (cleaned.includes('Thinking') || cleaned.includes('thinking')) {
       return { type: 'thinking', content: cleaned.trim(), raw };
     }
 
@@ -93,43 +82,40 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
   }
 
   async execute(profile: AgentProfile, text: string, options?: ExecutionOptions): Promise<ExecutionResult> {
-    const args = this.buildOneShotArgs(profile, options?.sessionId);
-    const env = buildCleanEnv({
-      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-      ...options?.env,
-    });
+    const env = buildCleanEnv({ ...options?.env });
 
-    log.info(`Executing: claude ${args.join(' ')} <<< "${text.slice(0, 60)}"`, undefined, profile.id);
+    log.info(`Executing: cursor-agent -p <<< "${text.slice(0, 60)}"`, undefined, profile.id);
 
     return new Promise((resolve) => {
-      const child = spawn('claude', args, {
+      const args = ['-p', '--output-format', 'stream-json', '--trust'];
+
+      if (profile.model) {
+        args.push('--model', profile.model);
+      }
+
+      const child = spawn('cursor-agent', args, {
         cwd: options?.cwd ?? profile.cwd ?? process.env.HOME ?? '/',
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
-      // Pipe voice command text via stdin — avoids shell escaping issues
       child.stdin.write(text);
       child.stdin.end();
 
       let stdout = '';
       let stderr = '';
+      let lineBuf = '';
 
-      // Abort signal support
       if (options?.signal) {
         options.signal.addEventListener('abort', () => {
           child.kill('SIGTERM');
         }, { once: true });
       }
 
-      // Parse streaming JSONL events for progress reporting
-      let lineBuf = '';
-
       child.stdout.on('data', (chunk: Buffer) => {
         const chunkStr = chunk.toString();
         stdout += chunkStr;
 
-        // Parse line-delimited JSON for progress events
         if (options?.onProgress) {
           lineBuf += chunkStr;
           const lines = lineBuf.split('\n');
@@ -147,7 +133,6 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
       });
 
       child.on('close', (code) => {
-        // Parse any remaining buffered line
         if (options?.onProgress && lineBuf.trim()) {
           this.parseStreamEvent(lineBuf, options.onProgress);
         }
@@ -171,7 +156,6 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
     });
   }
 
-  /** Parse a single streaming JSONL event and emit progress if interesting */
   private parseStreamEvent(
     line: string,
     onProgress: (event: { type: 'tool-use' | 'thinking' | 'text'; summary: string }) => void,
@@ -179,81 +163,34 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
     try {
       const event = JSON.parse(line);
 
-      // Tool use events
       if (event.type === 'tool_use' || event.tool_name) {
         const toolName = event.tool_name ?? event.name ?? 'a tool';
-        const input = event.input?.command ?? event.input?.file_path ?? '';
-        const summary = input
-          ? `Using ${toolName}: ${String(input).slice(0, 60)}`
-          : `Using ${toolName}`;
-        onProgress({ type: 'tool-use', summary });
+        onProgress({ type: 'tool-use', summary: `Using ${toolName}` });
         return;
       }
 
-      // Content block with tool_use type
-      if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
-        const name = event.content_block.name ?? 'a tool';
-        onProgress({ type: 'tool-use', summary: `Using ${name}` });
-        return;
-      }
-
-      // Thinking events
-      if (event.type === 'thinking' || (event.type === 'content_block_start' && event.content_block?.type === 'thinking')) {
+      if (event.type === 'thinking') {
         onProgress({ type: 'thinking', summary: 'Thinking...' });
         return;
       }
 
-      // Message start — agent has begun processing the request
       if (event.type === 'message_start') {
         onProgress({ type: 'thinking', summary: 'Processing request...' });
         return;
       }
 
-      // Text content block — agent is composing a text response
       if (event.type === 'content_block_start' && event.content_block?.type === 'text') {
         onProgress({ type: 'text', summary: 'Composing response...' });
         return;
       }
     } catch {
-      // Not JSON or unrecognized format — ignore
+      // Not JSON — ignore
     }
   }
 
-  /** Build CLI args for one-shot `claude -p --output-format stream-json` */
-  private buildOneShotArgs(profile: AgentProfile, sessionId?: string): string[] {
-    const args: string[] = ['-p', '--verbose', '--output-format', 'stream-json'];
-
-    if (profile.allowFullAccess) {
-      args.push('--dangerously-skip-permissions');
-    }
-
-    if (profile.model) {
-      args.push('--model', profile.model);
-    }
-
-    const systemPrompt = this.buildSystemPrompt(profile);
-    if (systemPrompt) {
-      args.push('--system-prompt', systemPrompt);
-    }
-
-    if (sessionId) {
-      args.push('--resume', sessionId);
-    }
-
-    return args;
-  }
-
-  /** Compose a system prompt — uses enriched prompt directly if present (from AgentContextBuilder) */
-  private buildSystemPrompt(profile: AgentProfile): string {
-    if (profile.systemPrompt) return profile.systemPrompt;
-    return `Your name is ${profile.name}. When asked who you are, respond as ${profile.name}.`;
-  }
-
-  /** Parse streaming JSONL output — find the result event */
   private parseOneShotOutput(stdout: string): ExecutionResult {
     const lines = stdout.trim().split('\n');
 
-    // Look for the result event (last one wins)
     for (let i = lines.length - 1; i >= 0; i--) {
       try {
         const obj = JSON.parse(lines[i]);
@@ -276,7 +213,6 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
         sessionId: data.session_id,
       };
     } catch {
-      // Last resort: return raw stdout stripped of ANSI
       return { success: true, text: stripAnsiSimple(stdout).trim() };
     }
   }
