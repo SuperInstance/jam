@@ -438,10 +438,12 @@ function registerIpcHandlers(): void {
           return;
         }
 
-        // no_speech_prob filter (Whisper) — high value means audio is likely noise
+        // no_speech_prob filter (Whisper) — only trust it when confidence is also low
+        // Whisper's no_speech_prob is unreliable: it can report 0.8+ on perfectly clear speech
         const { noSpeechThreshold, noiseBlocklist } = orchestrator.config;
-        if (result.noSpeechProb !== undefined && result.noSpeechProb > noSpeechThreshold) {
-          log.debug(`Filtered by no_speech_prob (${result.noSpeechProb.toFixed(2)} > ${noSpeechThreshold}): "${cleaned}"`);
+        const confidence = result.confidence ?? 1;
+        if (result.noSpeechProb !== undefined && result.noSpeechProb > noSpeechThreshold && confidence < 0.7) {
+          log.debug(`Filtered by no_speech_prob (${result.noSpeechProb.toFixed(2)} > ${noSpeechThreshold}, confidence ${confidence.toFixed(2)}): "${cleaned}"`);
           return;
         }
 
