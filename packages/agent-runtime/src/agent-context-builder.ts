@@ -27,6 +27,12 @@ const SKILLS_DIR = 'skills';
 const SOUL_FILE = 'SOUL.md';
 
 export class AgentContextBuilder {
+  /** Shared skills directory — loaded for all agents (agent-specific overrides shared) */
+  private sharedSkillsDir: string | null = null;
+
+  setSharedSkillsDir(dir: string): void {
+    this.sharedSkillsDir = dir;
+  }
 
   /** Build enriched profile with SOUL.md, conversation history, and matched skills */
   async buildContext(profile: AgentProfile, commandText: string): Promise<AgentProfile> {
@@ -153,24 +159,37 @@ export class AgentContextBuilder {
   }
 
   private async matchSkills(cwd: string, commandText: string): Promise<SkillDefinition[]> {
-    const dir = join(cwd, SKILLS_DIR);
+    // Load from agent's own skills dir + shared skills dir
+    const [agentSkills, sharedSkills] = await Promise.all([
+      this.loadSkillsFromDir(join(cwd, SKILLS_DIR)),
+      this.sharedSkillsDir ? this.loadSkillsFromDir(this.sharedSkillsDir) : Promise.resolve([]),
+    ]);
+
+    // Merge: agent-specific skills override shared ones (by name)
+    const agentNames = new Set(agentSkills.map(s => s.name));
+    const merged = [...agentSkills, ...sharedSkills.filter(s => !agentNames.has(s.name))];
+
+    // Filter by trigger match
+    const lowerCommand = commandText.toLowerCase();
+    return merged.filter(skill =>
+      skill.triggers.some(trigger => lowerCommand.includes(trigger.toLowerCase()))
+    );
+  }
+
+  private async loadSkillsFromDir(dir: string): Promise<SkillDefinition[]> {
     try {
       const files = await readdir(dir);
       const mdFiles = files.filter(f => f.endsWith('.md'));
 
-      const allSkills: SkillDefinition[] = [];
+      const skills: SkillDefinition[] = [];
       for (const file of mdFiles) {
         try {
           const content = await readFile(join(dir, file), 'utf-8');
           const skill = this.parseSkillFile(content);
-          if (skill) allSkills.push(skill);
+          if (skill) skills.push(skill);
         } catch { /* skip unreadable */ }
       }
-
-      const lowerCommand = commandText.toLowerCase();
-      return allSkills.filter(skill =>
-        skill.triggers.some(trigger => lowerCommand.includes(trigger.toLowerCase()))
-      );
+      return skills;
     } catch {
       return [];
     }

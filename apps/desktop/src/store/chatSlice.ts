@@ -21,6 +21,10 @@ export interface ChatMessage {
 export interface ChatSlice {
   messages: ChatMessage[];
   isProcessing: boolean;
+  /** Agent ID currently being processed (for interrupt targeting) */
+  processingAgentId: string | null;
+  /** Agent ID whose output thread drawer is open (null = closed) */
+  threadAgentId: string | null;
   isLoadingHistory: boolean;
   hasMoreHistory: boolean;
   historyLoaded: boolean;
@@ -29,7 +33,8 @@ export interface ChatSlice {
   prependMessages: (msgs: ChatMessage[]) => void;
   updateMessage: (id: string, updates: Partial<ChatMessage>) => void;
   clearMessages: () => void;
-  setIsProcessing: (v: boolean) => void;
+  setIsProcessing: (v: boolean, agentId?: string | null) => void;
+  setThreadAgent: (agentId: string | null) => void;
   setIsLoadingHistory: (v: boolean) => void;
   setHasMoreHistory: (v: boolean) => void;
   setHistoryLoaded: (v: boolean) => void;
@@ -43,6 +48,8 @@ export const createChatSlice: StateCreator<
 > = (set) => ({
   messages: [],
   isProcessing: false,
+  processingAgentId: null,
+  threadAgentId: null,
   isLoadingHistory: false,
   hasMoreHistory: true,
   historyLoaded: false,
@@ -67,8 +74,11 @@ export const createChatSlice: StateCreator<
   clearMessages: () =>
     set({ messages: [], hasMoreHistory: false, historyLoaded: true }),
 
-  setIsProcessing: (isProcessing) =>
-    set({ isProcessing }),
+  setIsProcessing: (isProcessing, agentId) =>
+    set({ isProcessing, processingAgentId: isProcessing ? (agentId ?? null) : null }),
+
+  setThreadAgent: (threadAgentId) =>
+    set({ threadAgentId }),
 
   setIsLoadingHistory: (isLoadingHistory) =>
     set({ isLoadingHistory }),

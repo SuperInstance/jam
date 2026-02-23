@@ -13,7 +13,7 @@ export function useAgentTerminal(agentId: string) {
   );
   const flushTerminalData = useAppStore((s) => s.flushTerminalData);
 
-  // Initialize terminal
+  // Initialize terminal + load scrollback history
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -42,6 +42,12 @@ export function useAgentTerminal(agentId: string) {
 
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
+
+    // Replay scrollback history so the terminal shows past output
+    const scrollback = useAppStore.getState().terminalBuffers[agentId]?.scrollback ?? [];
+    for (const data of scrollback) {
+      terminal.write(data);
+    }
 
     return () => {
       terminal.dispose();

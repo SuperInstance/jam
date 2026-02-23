@@ -11,6 +11,8 @@ import { LogsContainer } from '@/containers/LogsContainer';
 import { CompactViewContainer } from '@/containers/CompactViewContainer';
 import { OnboardingContainer } from '@/containers/OnboardingContainer';
 import { SetupBanner } from '@/components/SetupBanner';
+import { ThreadDrawer } from '@/components/chat/ThreadDrawer';
+import { ServiceBar } from '@/components/ServiceBar';
 import type { AgentEntry } from '@/store/agentSlice';
 import type { ChatMessage } from '@/store/chatSlice';
 
@@ -121,6 +123,8 @@ export default function App() {
   const sidebarCollapsed = useAppStore((s) => s.settings.sidebarCollapsed);
   const setSidebarCollapsed = useAppStore((s) => s.setSidebarCollapsed);
   const viewMode = useAppStore((s) => s.settings.viewMode);
+  const threadAgentId = useAppStore((s) => s.threadAgentId);
+  const setThreadAgent = useAppStore((s) => s.setThreadAgent);
   const [activeTab, setActiveTab] = useState<SidebarTab>('agents');
 
   // Onboarding gate
@@ -140,6 +144,7 @@ export default function App() {
   const updateAgentProfile = useAppStore((s) => s.updateAgentProfile);
   const updateAgentVisualState = useAppStore((s) => s.updateAgentVisualState);
   const appendTerminalData = useAppStore((s) => s.appendTerminalData);
+  const appendExecuteOutput = useAppStore((s) => s.appendExecuteOutput);
   const setTranscript = useAppStore((s) => s.setTranscript);
   const setAgentActive = useAppStore((s) => s.setAgentActive);
   const addMessage = useAppStore((s) => s.addMessage);
@@ -227,6 +232,13 @@ export default function App() {
       },
     );
 
+    // Execute output — streamed markdown for ThreadDrawer
+    const unsubExecuteOutput = window.jam.terminal.onExecuteOutput(
+      ({ agentId, output, clear }) => {
+        appendExecuteOutput(agentId, output, clear);
+      },
+    );
+
     const unsubTranscription = window.jam.voice.onTranscription(
       ({ text, isFinal }) => {
         setTranscript({ text, isFinal });
@@ -268,7 +280,10 @@ export default function App() {
           source: 'text',
           timestamp: Date.now(),
         };
-        useAppStore.getState().addMessage(msg);
+        const store = useAppStore.getState();
+        store.addMessage(msg);
+        // Track which agent is processing so the interrupt button can target it
+        store.setIsProcessing(true, agentId);
       },
     );
 
@@ -348,6 +363,25 @@ export default function App() {
       },
     );
 
+    // Chat: message queued — notify user that their message will be processed after current task
+    const unsubQueued = window.jam.chat.onMessageQueued(
+      ({ agentName, queuePosition }) => {
+        const msg: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: 'system',
+          agentId: null,
+          agentName: null,
+          agentRuntime: null,
+          agentColor: null,
+          content: `${agentName} is busy — your message is queued (#${queuePosition}). It will run when the current task finishes.`,
+          status: 'complete',
+          source: 'text',
+          timestamp: Date.now(),
+        };
+        useAppStore.getState().addMessage(msg);
+      },
+    );
+
     return () => {
       unsubStatusChange();
       unsubCreated();
@@ -355,6 +389,7 @@ export default function App() {
       unsubUpdated();
       unsubVisualState();
       unsubTerminalData();
+      unsubExecuteOutput();
       unsubTranscription();
       unsubVoiceState();
       unsubTTSAudio();
@@ -363,6 +398,7 @@ export default function App() {
       unsubAgentResponse();
       unsubAppError();
       unsubProgress();
+      unsubQueued();
       // Stop any playing audio on cleanup
       if (audioRef.current) {
         audioRef.current.pause();
@@ -377,6 +413,7 @@ export default function App() {
     updateAgentProfile,
     updateAgentVisualState,
     appendTerminalData,
+    appendExecuteOutput,
     setTranscript,
     setAgentActive,
     addMessage,
@@ -434,7 +471,20 @@ export default function App() {
 
       <div className="flex-1 flex flex-col min-w-0">
         <SetupBanner onOpenSettings={() => setActiveTab('settings')} />
-        {viewMode === 'chat' ? <ChatContainer /> : <AgentStageContainer />}
+        <div className="flex-1 flex min-h-0">
+          <div className="flex-1 flex flex-col min-w-0">
+            {viewMode === 'chat' ? <ChatContainer /> : <AgentStageContainer />}
+          </div>
+
+          {/* Thread drawer — right-side terminal panel */}
+          {threadAgentId && (
+            <ThreadDrawer
+              agentId={threadAgentId}
+              onClose={() => setThreadAgent(null)}
+            />
+          )}
+        </div>
+        <ServiceBar />
         <CommandBarContainer />
       </div>
     </AppShell>

@@ -4,8 +4,9 @@ import { useAppStore } from '@/store';
 // Fallback constants — overridden by config from main process
 const DEFAULT_VAD_THRESHOLD = 0.03;
 const DEFAULT_MIN_RECORDING_MS = 600;
-const SILENCE_TIMEOUT_MS = 2500; // Stop recording after 2.5s of silence
+const SILENCE_TIMEOUT_MS = 4000; // Stop recording after 4s of sustained silence
 const VAD_CHECK_INTERVAL_MS = 50; // Check audio level every 50ms
+const SILENCE_DEBOUNCE_COUNT = 6; // Require 6 consecutive silent checks (300ms) before starting countdown
 
 export function useVoice() {
   const voiceState = useAppStore((s) => s.voiceState);
@@ -26,6 +27,7 @@ export function useVoice() {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const vadIntervalRef = useRef<number | null>(null);
   const silenceTimerRef = useRef<number | null>(null);
+  const silentChecksRef = useRef(0);
   const isRecordingRef = useRef(false);
   const recordingStartRef = useRef<number>(0);
 
@@ -224,17 +226,20 @@ export function useVoice() {
           if (!isRecordingRef.current) {
             beginRecording();
           }
-          // Reset silence timer
+          // Reset silence tracking
+          silentChecksRef.current = 0;
           if (silenceTimerRef.current !== null) {
             clearTimeout(silenceTimerRef.current);
             silenceTimerRef.current = null;
           }
         } else if (isRecordingRef.current) {
-          // Below threshold while recording — start silence countdown
-          if (silenceTimerRef.current === null) {
+          // Below threshold while recording — require sustained silence before countdown
+          silentChecksRef.current++;
+          if (silentChecksRef.current >= SILENCE_DEBOUNCE_COUNT && silenceTimerRef.current === null) {
             silenceTimerRef.current = window.setTimeout(() => {
               endRecording();
               silenceTimerRef.current = null;
+              silentChecksRef.current = 0;
             }, SILENCE_TIMEOUT_MS);
           }
         }

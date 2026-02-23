@@ -6,6 +6,7 @@ import {
   Menu,
   nativeImage,
   systemPreferences,
+  shell,
 } from 'electron';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
@@ -156,6 +157,29 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let orchestrator: Orchestrator;
 let isQuitting = false;
+
+// --- HMR cleanup ---
+// vite-plugin-electron restarts the main process on code changes.
+// Without explicit cleanup, child processes (PTY agents, one-shot execute() calls)
+// become orphaned. Hook into the process exit to shut down gracefully.
+if (process.env.VITE_DEV_SERVER_URL) {
+  // In dev mode, register cleanup that runs before the process is replaced
+  const hmrCleanup = () => {
+    try {
+      if (orchestrator) {
+        orchestrator.shutdown();
+      }
+    } catch {
+      // Best-effort cleanup during HMR
+    }
+  };
+  process.on('exit', hmrCleanup);
+  // SIGHUP is sent by vite-plugin-electron when restarting the main process
+  process.on('SIGHUP', () => {
+    hmrCleanup();
+    process.exit(0);
+  });
+}
 
 // --- Log Buffer & IPC Transport ---
 const LOG_BUFFER_SIZE = 500;
@@ -403,8 +427,14 @@ function registerIpcHandlers(): void {
         // Strip ambient noise — STT often transcribes background sounds as
         // parenthetical descriptions like "(door closes)", "(birds chirping)" etc.
         const cleaned = result.text.replace(/\s*\([^)]*\)\s*/g, ' ').trim();
-        if (cleaned.length < 3) {
-          log.debug(`Filtered noise transcription: "${result.text}"`);
+        if (cleaned.length < 5) {
+          log.debug(`Filtered noise (too short ${cleaned.length} chars): "${result.text}"`);
+          return;
+        }
+
+        // Low confidence filter — Whisper returns confidence between 0-1
+        if (result.confidence !== undefined && result.confidence < 0.4) {
+          log.debug(`Filtered by low confidence (${result.confidence.toFixed(2)}): "${cleaned}"`);
           return;
         }
 
@@ -419,6 +449,14 @@ function registerIpcHandlers(): void {
         const lowerCleaned = cleaned.toLowerCase().trim();
         if (noiseBlocklist.some((phrase: string) => lowerCleaned === phrase.toLowerCase())) {
           log.debug(`Filtered by noise blocklist: "${cleaned}"`);
+          return;
+        }
+
+        // Single-word filter — real commands are almost always 2+ words
+        // (Agent names alone don't trigger actions)
+        const wordCount = cleaned.split(/\s+/).length;
+        if (wordCount < 2) {
+          log.debug(`Filtered single word: "${cleaned}"`);
           return;
         }
 
@@ -486,25 +524,6 @@ function registerIpcHandlers(): void {
           return;
         }
 
-        // Task command — check if agent is busy
-        if (voiceCommandsInFlight.has(targetId)) {
-          // Agent is busy — check allowInterrupts
-          if (agent?.profile.allowInterrupts) {
-            log.info(`Interrupting "${agent.profile.name}" with new task: "${parsed.command}"`);
-            orchestrator.agentManager.abortTask(targetId);
-            voiceCommandsInFlight.delete(targetId);
-            // Fall through to dispatch the new command below
-          } else {
-            const name = agent?.profile.name ?? 'Agent';
-            const task = orchestrator.agentManager.getTaskStatus(targetId);
-            const taskDesc = task?.command
-              ? ` on "${task.command.slice(0, 40)}${task.command.length > 40 ? '...' : ''}"`
-              : '';
-            sendStatusMessage(targetId, `${name} is busy working${taskDesc}. Ask for a status update if you want to know more.`);
-            return;
-          }
-        }
-
         voiceCommandsInFlight.add(targetId);
         log.info(`Voice → "${agent?.profile.name ?? targetId}": "${parsed.command}"`);
 
@@ -517,7 +536,21 @@ function registerIpcHandlers(): void {
           });
         }
 
-        orchestrator.agentManager.voiceCommand(targetId, parsed.command).then((cmdResult) => {
+        // Enqueue — if busy, waits until current task finishes
+        const { promise, queuePosition } = orchestrator.agentManager.enqueueCommand(targetId, parsed.command, 'voice');
+
+        if (queuePosition > 0 && mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('chat:messageQueued', {
+            agentId: targetId,
+            agentName: agent?.profile.name ?? 'Agent',
+            agentRuntime: agent?.profile.runtime ?? '',
+            agentColor: agent?.profile.color ?? '#6b7280',
+            queuePosition,
+            command: parsed.command.slice(0, 60),
+          });
+        }
+
+        promise.then((cmdResult) => {
           if (!mainWindow || mainWindow.isDestroyed()) return;
 
           if (cmdResult.success && cmdResult.text) {
@@ -718,28 +751,24 @@ function registerIpcHandlers(): void {
       };
     }
 
-    // Task — check if busy
-    if (orchestrator.agentManager.isTaskRunning(targetId)) {
-      if (agent.profile.allowInterrupts) {
-        orchestrator.agentManager.abortTask(targetId);
-        voiceCommandsInFlight.delete(targetId);
-      } else {
-        const task = orchestrator.agentManager.getTaskStatus(targetId);
-        const taskDesc = task?.command ? ` on "${task.command.slice(0, 40)}"` : '';
-        return {
-          success: false,
-          error: `${agent.profile.name} is busy working${taskDesc}. Ask for a status update or use /status.`,
-          agentId: targetId,
-          agentName: agent.profile.name,
-          agentRuntime: agent.profile.runtime,
-          agentColor: agent.profile.color,
-        };
-      }
-    }
-
     log.info(`Chat → "${agent.profile.name}": "${parsed.command.slice(0, 60)}"`, undefined, targetId);
 
-    const result = await orchestrator.agentManager.voiceCommand(targetId, parsed.command, 'text');
+    // Enqueue the command — if agent is busy, it waits in the queue
+    const { promise, queuePosition } = orchestrator.agentManager.enqueueCommand(targetId, parsed.command, 'text');
+
+    if (queuePosition > 0) {
+      // Notify the renderer that the message was queued (not running yet)
+      mainWindow?.webContents.send('chat:messageQueued', {
+        agentId: targetId,
+        agentName: agent.profile.name,
+        agentRuntime: agent.profile.runtime,
+        agentColor: agent.profile.color,
+        queuePosition,
+        command: parsed.command.slice(0, 60),
+      });
+    }
+
+    const result = await promise;
 
     return {
       success: result.success,
@@ -755,6 +784,19 @@ function registerIpcHandlers(): void {
   // Task status — query agent's current task from in-memory tracker
   ipcMain.handle('agents:getTaskStatus', (_, agentId: string) => {
     return orchestrator.agentManager.getTaskStatus(agentId);
+  });
+
+  // Interrupt — abort the agent's current task (UI cancel button)
+  ipcMain.handle('chat:interruptAgent', (_, agentId: string) => {
+    const agent = orchestrator.agentManager.get(agentId);
+    const aborted = orchestrator.agentManager.abortTask(agentId);
+    voiceCommandsInFlight.delete(agentId);
+    return {
+      success: aborted,
+      text: aborted
+        ? `Stopped ${agent?.profile.name ?? 'agent'}'s current task.`
+        : `${agent?.profile.name ?? 'Agent'} isn't working on anything right now.`,
+    };
   });
 
   // Chat history — paginated conversation loading from JSONL files
@@ -1003,6 +1045,29 @@ function registerIpcHandlers(): void {
     ensureClaudePermissionAccepted();
 
     return { success: true };
+  });
+
+  // Services — background processes tracked by agents
+  ipcMain.handle('services:list', async () => {
+    // Scan fresh before returning
+    orchestrator.scanServices();
+    // Allow scan to complete (fire-and-forget above, give it a tick)
+    await new Promise(r => setTimeout(r, 50));
+    return orchestrator.serviceRegistry.list();
+  });
+
+  ipcMain.handle('services:stop', (_, pid: number) => {
+    const success = orchestrator.serviceRegistry.stopService(pid);
+    return { success };
+  });
+
+  ipcMain.handle('services:openUrl', (_, port: number) => {
+    try {
+      shell.openExternal(`http://localhost:${port}`);
+      return { success: true };
+    } catch {
+      return { success: false };
+    }
   });
 
   // App

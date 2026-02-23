@@ -116,14 +116,15 @@ export class CursorRuntime implements IAgentRuntime {
         const chunkStr = chunk.toString();
         stdout += chunkStr;
 
-        if (options?.onProgress) {
+        if (options?.onProgress || options?.onOutput) {
           lineBuf += chunkStr;
           const lines = lineBuf.split('\n');
           lineBuf = lines.pop() ?? '';
 
           for (const line of lines) {
             if (!line.trim()) continue;
-            this.parseStreamEvent(line, options.onProgress);
+            if (options.onProgress) this.parseStreamEvent(line, options.onProgress);
+            if (options.onOutput) this.emitTerminalLine(line, options.onOutput);
           }
         }
       });
@@ -133,8 +134,9 @@ export class CursorRuntime implements IAgentRuntime {
       });
 
       child.on('close', (code) => {
-        if (options?.onProgress && lineBuf.trim()) {
-          this.parseStreamEvent(lineBuf, options.onProgress);
+        if (lineBuf.trim()) {
+          if (options?.onProgress) this.parseStreamEvent(lineBuf, options.onProgress);
+          if (options?.onOutput) this.emitTerminalLine(lineBuf, options.onOutput);
         }
 
         if (code !== 0) {
@@ -186,6 +188,64 @@ export class CursorRuntime implements IAgentRuntime {
       }
     } catch {
       // Not JSON — ignore
+    }
+  }
+
+  /** Convert a JSONL event into markdown-friendly text for streamdown rendering */
+  private emitTerminalLine(
+    line: string,
+    onOutput: (data: string) => void,
+  ): void {
+    try {
+      const raw = JSON.parse(line);
+      // Unwrap stream_event wrapper if present
+      const event = raw.type === 'stream_event' && raw.event ? raw.event : raw;
+
+      if (event.type === 'tool_use' || event.tool_name) {
+        const toolName = event.tool_name ?? event.name ?? 'tool';
+        const input = event.input?.command ?? event.input?.file_path ?? '';
+        onOutput(`\n\`${toolName}\` ${input ? String(input).slice(0, 200) : ''}\n`);
+        return;
+      }
+      if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
+        const name = event.content_block.name ?? 'tool';
+        onOutput(`\n\`${name}\` `);
+        return;
+      }
+      if (event.type === 'tool_result' || event.content_type === 'tool_result') {
+        const output = event.output ?? event.content ?? '';
+        if (output) onOutput(`\n\`\`\`\n${String(output).slice(0, 500)}\n\`\`\`\n`);
+        return;
+      }
+      if (event.type === 'content_block_delta') {
+        const text = event.delta?.text ?? event.delta?.thinking;
+        if (text) {
+          onOutput(text);
+          return;
+        }
+      }
+      if (event.type === 'thinking' || (event.type === 'content_block_start' && event.content_block?.type === 'thinking')) {
+        onOutput('\n*thinking...*\n');
+        return;
+      }
+      if (event.type === 'assistant' && event.message?.content) {
+        for (const block of event.message.content) {
+          if (block.type === 'text' && block.text) {
+            onOutput(block.text);
+          } else if (block.type === 'tool_use') {
+            const input = block.input?.command ?? block.input?.file_path ?? '';
+            onOutput(`\n\`${block.name}\` ${input ? String(input).slice(0, 200) : ''}\n`);
+          }
+        }
+        return;
+      }
+      if (event.type === 'result' && event.result) {
+        onOutput(`\n${event.result}\n`);
+        return;
+      }
+    } catch {
+      const trimmed = line.trim();
+      if (trimmed) onOutput(trimmed + '\n');
     }
   }
 

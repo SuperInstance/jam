@@ -91,6 +91,9 @@ export interface JamAPI {
     onExit: (
       callback: (data: { agentId: string; exitCode: number }) => void,
     ) => () => void;
+    onExecuteOutput: (
+      callback: (data: { agentId: string; output: string; clear: boolean }) => void,
+    ) => () => void;
     getScrollback: (agentId: string) => Promise<string>;
   };
 
@@ -199,6 +202,20 @@ export interface JamAPI {
     ) => () => void;
   };
 
+  services: {
+    list: () => Promise<Array<{
+      agentId: string;
+      pid: number;
+      port?: number;
+      name: string;
+      logFile?: string;
+      startedAt: string;
+      alive?: boolean;
+    }>>;
+    stop: (pid: number) => Promise<{ success: boolean }>;
+    openUrl: (port: number) => Promise<{ success: boolean }>;
+  };
+
   chat: {
     sendCommand: (text: string) => Promise<{
       success: boolean;
@@ -208,6 +225,10 @@ export interface JamAPI {
       agentName?: string;
       agentRuntime?: string;
       agentColor?: string;
+    }>;
+    interruptAgent: (agentId: string) => Promise<{
+      success: boolean;
+      text?: string;
     }>;
     loadHistory: (options?: { agentId?: string; before?: string; limit?: number }) => Promise<{
       messages: Array<{
@@ -257,6 +278,16 @@ export interface JamAPI {
         summary: string;
       }) => void,
     ) => () => void;
+    onMessageQueued: (
+      callback: (data: {
+        agentId: string;
+        agentName: string;
+        agentRuntime: string;
+        agentColor: string;
+        queuePosition: number;
+        command: string;
+      }) => void,
+    ) => () => void;
   };
 }
 
@@ -293,6 +324,8 @@ contextBridge.exposeInMainWorld('jam', {
       ipcRenderer.send('terminal:resize', agentId, cols, rows),
     onData: (cb) => createEventListener('terminal:data', cb),
     onExit: (cb) => createEventListener('terminal:exit', cb),
+    onExecuteOutput: (cb) =>
+      createEventListener('terminal:executeOutput', cb),
     getScrollback: (agentId) =>
       ipcRenderer.invoke('terminal:getScrollback', agentId),
   },
@@ -364,13 +397,21 @@ contextBridge.exposeInMainWorld('jam', {
     onEntry: (cb) => createEventListener('logs:entry', cb),
   },
 
+  services: {
+    list: () => ipcRenderer.invoke('services:list'),
+    stop: (pid) => ipcRenderer.invoke('services:stop', pid),
+    openUrl: (port) => ipcRenderer.invoke('services:openUrl', port),
+  },
+
   chat: {
     sendCommand: (text) => ipcRenderer.invoke('chat:sendCommand', text),
+    interruptAgent: (agentId) => ipcRenderer.invoke('chat:interruptAgent', agentId),
     loadHistory: (options) => ipcRenderer.invoke('chat:loadHistory', options),
     onAgentAcknowledged: (cb) => createEventListener('chat:agentAcknowledged', cb),
     onAgentResponse: (cb) => createEventListener('chat:agentResponse', cb),
     onVoiceCommand: (cb) => createEventListener('chat:voiceCommand', cb),
     onAgentProgress: (cb) => createEventListener('chat:agentProgress', cb),
+    onMessageQueued: (cb) => createEventListener('chat:messageQueued', cb),
   },
 } as JamAPI);
 

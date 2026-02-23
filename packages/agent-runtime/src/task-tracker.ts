@@ -71,7 +71,13 @@ export class TaskTracker {
 
     const lastStep = task.steps[task.steps.length - 1];
     if (!lastStep) {
-      return `${agentName} has been working for ${timeStr} on "${commandPreview}". Still initializing.`;
+      if (elapsed < 10) {
+        return `${agentName} has been working for ${timeStr} on "${commandPreview}". Starting up.`;
+      }
+      if (elapsed < 30) {
+        return `${agentName} has been working for ${timeStr} on "${commandPreview}". Loading context and tools.`;
+      }
+      return `${agentName} has been working for ${timeStr} on "${commandPreview}". Working — check the terminal for live output.`;
     }
 
     const lastAction = lastStep.summary.length > 80

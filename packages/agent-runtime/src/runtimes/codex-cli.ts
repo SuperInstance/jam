@@ -118,6 +118,11 @@ export class CodexCLIRuntime implements IAgentRuntime {
         const chunkStr = chunk.toString();
         stdout += chunkStr;
 
+        // Stream ANSI-stripped output for streamdown rendering
+        if (options?.onOutput) {
+          options.onOutput(stripAnsiSimple(chunkStr));
+        }
+
         if (options?.onProgress) {
           if (!firstChunkSent) {
             firstChunkSent = true;

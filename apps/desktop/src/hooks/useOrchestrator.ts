@@ -111,6 +111,27 @@ export function useOrchestrator() {
     }
   }, []);
 
+  const interruptAgent = useCallback(async (agentId: string) => {
+    const { addMessage, setIsProcessing } = useAppStore.getState();
+    const result = await window.jam.chat.interruptAgent(agentId);
+    if (result.success) {
+      addMessage({
+        id: crypto.randomUUID(),
+        role: 'system',
+        agentId: null,
+        agentName: null,
+        agentRuntime: null,
+        agentColor: null,
+        content: result.text ?? 'Task cancelled.',
+        status: 'complete',
+        source: 'text',
+        timestamp: Date.now(),
+      });
+      setIsProcessing(false);
+    }
+    return result;
+  }, []);
+
   const clearChat = useCallback(() => {
     useAppStore.getState().clearMessages();
   }, []);
@@ -131,6 +152,7 @@ export function useOrchestrator() {
     stopAgent,
     deleteAgent,
     sendTextCommand,
+    interruptAgent,
     clearChat,
     selectAgent,
   };

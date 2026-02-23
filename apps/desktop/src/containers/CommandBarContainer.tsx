@@ -20,29 +20,47 @@ export const CommandBarContainer: React.FC = () => {
     stopCapture,
     toggleListening,
   } = useVoice();
-  const { sendTextCommand, clearChat } = useOrchestrator();
+  const { sendTextCommand, interruptAgent, clearChat } = useOrchestrator();
   const isProcessing = useAppStore((s) => s.isProcessing);
   const viewMode = useAppStore((s) => s.settings.viewMode);
   const setViewMode = useAppStore((s) => s.setViewMode);
   const [textInput, setTextInput] = useState('');
 
+  // Derive working agent from visual state — more reliable than processingAgentId alone
+  // processingAgentId only covers text commands; visualState covers voice + text
+  const workingAgentId = useAppStore((s) => {
+    if (s.processingAgentId) return s.processingAgentId;
+    for (const [id, agent] of Object.entries(s.agents)) {
+      if (agent.visualState === 'thinking') return id;
+    }
+    return null;
+  });
+
   const handleTextSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (textInput.trim() && !isProcessing) {
+    if (textInput.trim()) {
       sendTextCommand(textInput.trim());
       setTextInput('');
+    }
+  };
+
+  const handleInterrupt = () => {
+    if (workingAgentId) {
+      interruptAgent(workingAgentId);
     }
   };
 
   const isPTT = voiceMode === 'push-to-talk';
   const isVoiceActive = isRecording || isListening;
 
-  const placeholder = isProcessing
-    ? 'Waiting for response...'
-    : isRecording
-      ? 'Recording...'
-      : isListening
-        ? 'Listening for voice...'
+  const isBusy = isProcessing || !!workingAgentId;
+
+  const placeholder = isRecording
+    ? 'Recording...'
+    : isListening
+      ? 'Listening for voice...'
+      : isBusy
+        ? 'Type another command (will queue)...'
         : isPTT
           ? 'Type a command or hold mic to talk...'
           : 'Type a command or click mic to listen...';
@@ -79,10 +97,23 @@ export const CommandBarContainer: React.FC = () => {
             value={textInput}
             onChange={(e) => setTextInput(e.target.value)}
             placeholder={placeholder}
-            disabled={isRecording || isProcessing}
+            disabled={isRecording}
             className="w-full px-4 py-2.5 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500 disabled:opacity-50"
           />
         </form>
+
+        {/* Cancel/interrupt button — shown when any agent is working */}
+        {workingAgentId && (
+          <button
+            onClick={handleInterrupt}
+            className="px-3 py-2 rounded-lg text-xs font-medium transition-colors bg-red-900/30 text-red-400 hover:bg-red-900/50 hover:text-red-300 border border-red-800/50"
+            title="Cancel current task"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="6" y="6" width="12" height="12" rx="2" />
+            </svg>
+          </button>
+        )}
 
         {/* Clear chat */}
         <button

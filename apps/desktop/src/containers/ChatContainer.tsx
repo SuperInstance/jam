@@ -9,6 +9,8 @@ export const ChatContainer: React.FC = () => {
   const messages = useAppStore((s) => s.messages);
   const isLoadingHistory = useAppStore((s) => s.isLoadingHistory);
   const hasMoreHistory = useAppStore((s) => s.hasMoreHistory);
+  const threadAgentId = useAppStore((s) => s.threadAgentId);
+  const setThreadAgent = useAppStore((s) => s.setThreadAgent);
   const loadingRef = useRef(false);
 
   const handleLoadMore = useCallback(async () => {
@@ -54,12 +56,20 @@ export const ChatContainer: React.FC = () => {
     }
   }, []);
 
+  const handleViewOutput = useCallback((agentId: string) => {
+    // Toggle: if same agent's thread is already open, close it
+    const current = useAppStore.getState().threadAgentId;
+    setThreadAgent(current === agentId ? null : agentId);
+  }, [setThreadAgent]);
+
   return (
     <ChatView
       messages={messages}
       isLoadingHistory={isLoadingHistory}
       hasMoreHistory={hasMoreHistory}
       onLoadMore={handleLoadMore}
+      onViewOutput={handleViewOutput}
+      threadAgentId={threadAgentId}
     />
   );
 };

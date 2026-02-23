@@ -113,6 +113,11 @@ export class OpenCodeRuntime implements IAgentRuntime {
         const chunkStr = chunk.toString();
         stdout += chunkStr;
 
+        // Stream ANSI-stripped output for streamdown rendering
+        if (options?.onOutput) {
+          options.onOutput(stripAnsiSimple(chunkStr));
+        }
+
         // Emit throttled progress events from raw output
         if (options?.onProgress) {
           // Emit immediately on first output so status isn't stuck on "initializing"

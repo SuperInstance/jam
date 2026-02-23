@@ -7,6 +7,8 @@ interface ChatViewProps {
   isLoadingHistory?: boolean;
   hasMoreHistory?: boolean;
   onLoadMore?: () => void;
+  onViewOutput?: (agentId: string) => void;
+  threadAgentId?: string | null;
 }
 
 export const ChatView: React.FC<ChatViewProps> = ({
@@ -14,6 +16,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
   isLoadingHistory,
   hasMoreHistory,
   onLoadMore,
+  onViewOutput,
+  threadAgentId,
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevMessageCountRef = useRef(messages.length);
@@ -133,7 +137,12 @@ export const ChatView: React.FC<ChatViewProps> = ({
       )}
 
       {messages.map((msg) => (
-        <ChatMessageView key={msg.id} message={msg} />
+        <ChatMessageView
+          key={msg.id}
+          message={msg}
+          onViewOutput={onViewOutput}
+          isThreadOpen={!!msg.agentId && msg.agentId === threadAgentId}
+        />
       ))}
     </div>
   );

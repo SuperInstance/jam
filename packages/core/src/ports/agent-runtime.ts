@@ -39,6 +39,8 @@ export interface ExecutionOptions {
   signal?: AbortSignal;
   /** Called with progress updates during execution (tool use, thinking, etc.) */
   onProgress?: (event: ExecutionProgress) => void;
+  /** Called with terminal-friendly output chunks during execution for real-time display */
+  onOutput?: (data: string) => void;
 }
 
 /** Model option available for a runtime */

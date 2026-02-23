@@ -1,6 +1,8 @@
 import { app, BrowserWindow } from 'electron';
 import { join } from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { readFile, mkdir, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { EventBus } from '@jam/eventbus';
 import {
   PtyManager,
@@ -10,6 +12,7 @@ import {
   OpenCodeRuntime,
   CodexCLIRuntime,
   CursorRuntime,
+  ServiceRegistry,
 } from '@jam/agent-runtime';
 import {
   VoiceService,
@@ -48,6 +51,7 @@ export class Orchestrator {
   readonly ptyManager: PtyManager;
   readonly runtimeRegistry: RuntimeRegistry;
   readonly agentManager: AgentManager;
+  readonly serviceRegistry: ServiceRegistry;
   readonly memoryStore: FileMemoryStore;
   readonly appStore: AppStore;
   readonly config: JamConfig;
@@ -63,6 +67,7 @@ export class Orchestrator {
     this.runtimeRegistry = new RuntimeRegistry();
     this.appStore = new AppStore();
     this.commandParser = new CommandParser();
+    this.serviceRegistry = new ServiceRegistry();
 
     // Register runtimes
     this.runtimeRegistry.register(new ClaudeCodeRuntime());
@@ -70,7 +75,10 @@ export class Orchestrator {
     this.runtimeRegistry.register(new CodexCLIRuntime());
     this.runtimeRegistry.register(new CursorRuntime());
 
-    // Create agent manager with secret injection support
+    // Shared skills directory — injected into every agent's context
+    const sharedSkillsDir = join(homedir(), '.jam', 'shared-skills');
+
+    // Create agent manager with secret injection + shared skills
     this.agentManager = new AgentManager(
       this.ptyManager,
       this.runtimeRegistry,
@@ -78,12 +86,28 @@ export class Orchestrator {
       this.appStore,
       (bindings) => this.appStore.resolveSecretBindings(bindings),
       () => this.appStore.getAllSecretValues(),
+      sharedSkillsDir,
     );
 
     // Create memory store
     const agentsDir = join(app.getPath('userData'), 'agents');
     this.memoryStore = new FileMemoryStore(agentsDir);
 
+    // Bootstrap shared skills (creates directory + default skills if missing)
+    this.bootstrapSharedSkills(sharedSkillsDir).catch(err =>
+      log.warn(`Failed to bootstrap shared skills: ${String(err)}`),
+    );
+  }
+
+  /** Create shared skills directory and default skill files if they don't exist */
+  private async bootstrapSharedSkills(dir: string): Promise<void> {
+    await mkdir(dir, { recursive: true });
+
+    const processSkillPath = join(dir, 'process-management.md');
+    if (!existsSync(processSkillPath)) {
+      await writeFile(processSkillPath, PROCESS_MANAGEMENT_SKILL, 'utf-8');
+      log.info(`Created shared skill: ${processSkillPath}`);
+    }
   }
 
   /** Safely send IPC to renderer — guards against destroyed window during HMR */
@@ -137,6 +161,14 @@ export class Orchestrator {
       this.sendToRenderer('terminal:data', {
         agentId: data.agentId,
         output: data.data,
+      });
+    });
+
+    this.eventBus.on('agent:executeOutput', (data: { agentId: string; data: string; clear?: boolean }) => {
+      this.sendToRenderer('terminal:executeOutput', {
+        agentId: data.agentId,
+        output: data.data,
+        clear: data.clear ?? false,
       });
     });
 
@@ -446,12 +478,111 @@ export class Orchestrator {
         await this.agentManager.start(agent.profile.id);
       }
     }
+
+    // Initial scan for background services agents may have left running
+    this.scanServices();
+  }
+
+  /** Scan all agent workspaces for .services.json and update the registry */
+  scanServices(): void {
+    const agents = this.agentManager.list().map(a => ({
+      id: a.profile.id,
+      cwd: a.profile.cwd,
+    }));
+    this.serviceRegistry.scanAll(agents).catch(err =>
+      log.warn(`Service scan failed: ${String(err)}`),
+    );
   }
 
   shutdown(): void {
     this.agentManager.stopHealthCheck();
     this.agentManager.stopAll();
+    this.serviceRegistry.stopAll();
     this.ptyManager.killAll();
     this.eventBus.removeAllListeners();
   }
 }
+
+// --- Default shared skill content ---
+
+const PROCESS_MANAGEMENT_SKILL = [
+  '---',
+  'name: process-management',
+  'description: How to run servers, UIs, and background processes safely',
+  'triggers: server, run, start, dev, npm run, yarn dev, build, serve, deploy, ui, app, dashboard, website, localhost, port',
+  '---',
+  '',
+  '# Background Process Management',
+  '',
+  'When asked to build and run a server, UI, website, or any long-running process:',
+  '',
+  '## Rules',
+  '1. **NEVER** run long-lived processes in the foreground (they block you forever)',
+  '2. **NEVER** use `tail -f`, `watch`, or stream logs — they consume infinite tokens',
+  '3. **ALWAYS** run processes in the background with output redirected to a log file',
+  '4. **ALWAYS** return control after confirming the process started successfully',
+  '5. **ALWAYS** register the service in `.services.json` so Jam can track and clean it up',
+  '',
+  '## How to Start a Background Process',
+  '',
+  '```bash',
+  '# Create a logs directory',
+  'mkdir -p logs',
+  '',
+  '# Start the process in background, redirect all output to log file',
+  'nohup npm run dev > logs/server.log 2>&1 &',
+  'SERVER_PID=$!',
+  'echo "Started server with PID: $SERVER_PID"',
+  '',
+  '# Wait briefly for startup',
+  'sleep 3',
+  '',
+  '# Verify it\'s running',
+  'if kill -0 $SERVER_PID 2>/dev/null; then',
+  '  echo "Server is running (PID: $SERVER_PID)"',
+  'else',
+  '  echo "Server failed to start. Check logs:"',
+  '  tail -20 logs/server.log',
+  'fi',
+  '```',
+  '',
+  '## Register the Service (REQUIRED)',
+  '',
+  'After starting a background process, write a JSON line to `.services.json` in your workspace directory so Jam can track it:',
+  '',
+  '```bash',
+  'echo \'{"pid":\'$SERVER_PID\',"port":3000,"name":"dev-server","logFile":"logs/server.log","startedAt":"\'$(date -u +%FT%TZ)\'"}\' >> .services.json',
+  '```',
+  '',
+  '## How to Check if a Process is Running',
+  '',
+  '```bash',
+  '# Check by PID',
+  'kill -0 $PID 2>/dev/null && echo "Running" || echo "Stopped"',
+  '',
+  '# Check by port',
+  'lsof -i :3000 -t 2>/dev/null',
+  '```',
+  '',
+  '## How to Check Logs (only when user asks)',
+  '',
+  '```bash',
+  '# Show last 50 lines (bounded, never streaming)',
+  'tail -50 logs/server.log',
+  '',
+  '# Search for errors',
+  'grep -i "error|fail|crash" logs/server.log | tail -20',
+  '```',
+  '',
+  '## How to Stop a Process',
+  '',
+  '```bash',
+  'kill $PID 2>/dev/null',
+  '```',
+  '',
+  '## Important',
+  '- After starting a background process, tell the user: the URL, the PID, and the log file path',
+  '- Do NOT open a browser automatically unless asked',
+  '- If the user says "check logs" or "show logs", use `tail -50` (bounded), never `tail -f`',
+  '- If something fails, show the last 20 lines of the log file to diagnose',
+].join('\n');

@@ -34,13 +34,31 @@ const DEFAULT_CONFIG: JamConfig = {
   defaultRuntime: 'claude-code',
   theme: 'dark',
   voiceSensitivity: 'medium',
-  minRecordingMs: 600,
+  minRecordingMs: 800,
   noSpeechThreshold: 0.6,
   noiseBlocklist: [
+    // Common Whisper phantom transcriptions from ambient noise
     'bye', 'bye bye', 'bye-bye', 'goodbye',
     'thank you', 'thanks', 'thank', 'you',
     'hmm', 'uh', 'um', 'ah', 'oh',
-    'okay', 'ok',
+    'okay', 'ok', 'yeah', 'yes', 'no', 'nah',
+    'so', 'well', 'right', 'like',
+    'hey', 'hi', 'hello',
+    // Whisper audio artifacts
+    'thank you for watching',
+    'thanks for watching',
+    'subscribe',
+    'please subscribe',
+    'like and subscribe',
+    'music',
+    'applause',
+    'laughter',
+    'silence',
+    'you',
+    'the',
+    'a',
+    'i',
+    'it',
   ],
 };
 

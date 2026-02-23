@@ -21,6 +21,27 @@ import { createSecretRedactor } from './utils.js';
 
 const log = createLogger('AgentManager');
 
+/** Strip JSON wrapper objects from result text — prevents raw JSONL from leaking into chat */
+function sanitizeResultText(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{')) return text;
+  try {
+    const obj = JSON.parse(trimmed);
+    // Claude Code result event: {"type":"result","result":"actual text",...}
+    if (obj.type === 'result' && typeof obj.result === 'string') return obj.result;
+    // Generic wrappers
+    if (typeof obj.text === 'string') return obj.text;
+    if (typeof obj.content === 'string') return obj.content;
+  } catch { /* not JSON — return as-is */ }
+  return text;
+}
+
+interface QueuedMessage {
+  text: string;
+  source: 'text' | 'voice';
+  resolve: (result: { success: boolean; text?: string; error?: string }) => void;
+}
+
 const ACK_PHRASES = [
   'On it!',
   'Got it, working on that now.',
@@ -55,6 +76,10 @@ export class AgentManager {
   private taskTracker = new TaskTracker();
   /** AbortControllers per agent — allows interrupting running tasks */
   private abortControllers = new Map<AgentId, AbortController>();
+  /** Per-agent message queues — messages are processed sequentially */
+  private messageQueues = new Map<AgentId, QueuedMessage[]>();
+  /** Per-agent processing locks — prevents concurrent voiceCommand calls */
+  private processingLocks = new Set<AgentId>();
   /** Output redactor — masks leaked secret values */
   private redact: (text: string) => string = (t) => t;
 
@@ -65,7 +90,11 @@ export class AgentManager {
     private store: AgentStore,
     private secretResolver?: SecretResolver,
     private secretValuesProvider?: SecretValuesProvider,
+    sharedSkillsDir?: string,
   ) {
+    if (sharedSkillsDir) {
+      this.contextBuilder.setSharedSkillsDir(sharedSkillsDir);
+    }
     // Restore saved profiles
     for (const profile of this.store.getProfiles()) {
       this.agents.set(profile.id, {
@@ -303,7 +332,7 @@ export class AgentManager {
 
     // Throttled progress reporting — emit voice updates during long-running tasks
     let lastProgressTime = 0;
-    const PROGRESS_THROTTLE_MS = 15_000; // Max one progress update every 15s
+    const PROGRESS_THROTTLE_MS = 5_000; // Max one progress update every 5s
 
     const onProgress: ExecutionOptions['onProgress'] = (event) => {
       // Always track steps (unthrottled)
@@ -327,6 +356,19 @@ export class AgentManager {
 
     const secrets = this.secretResolver?.(state.profile.secretBindings ?? []) ?? {};
 
+    // Stream execute() output to dedicated channel (rendered with streamdown in ThreadDrawer)
+    const onOutput: ExecutionOptions['onOutput'] = (data) => {
+      this.eventBus.emit('agent:executeOutput', { agentId, data: this.redact(data) });
+    };
+
+    // Clear previous execute output and show command header
+    const cmdPreview = text.length > 60 ? text.slice(0, 60) + '...' : text;
+    this.eventBus.emit('agent:executeOutput', {
+      agentId,
+      data: `\n---\n**${state.profile.name}:** "${cmdPreview}"\n\n`,
+      clear: true,
+    });
+
     let result;
     try {
       result = await runtime.execute(enrichedProfile, text, {
@@ -334,6 +376,7 @@ export class AgentManager {
         cwd: state.profile.cwd,
         env: { JAM_AGENT_ID: agentId, ...secrets },
         onProgress,
+        onOutput,
         signal: abortController.signal,
       });
     } catch (err) {
@@ -347,15 +390,18 @@ export class AgentManager {
 
     if (!result.success) {
       this.taskTracker.completeTask(agentId, 'failed');
-      this.eventBus.emit('agent:output', {
+      this.eventBus.emit('agent:executeOutput', {
         agentId,
-        data: `\r\n\x1b[31m⚠ Error: ${(result.error ?? 'Unknown error').slice(0, 200)}\x1b[0m\r\n`,
+        data: `\n> **Error:** ${(result.error ?? 'Unknown error').slice(0, 200)}\n`,
       });
       this.updateVisualState(agentId, state.status === 'running' ? 'idle' : 'offline');
       return { success: false, error: result.error };
     }
 
     this.taskTracker.completeTask(agentId, 'completed');
+
+    // Sanitize result text — strip JSON wrappers that runtimes may leak
+    result.text = sanitizeResultText(result.text);
 
     // Redact any leaked secret values from agent output
     result.text = this.redact(result.text);
@@ -381,14 +427,11 @@ export class AgentManager {
       }
     }
 
-    // Echo the conversation into the terminal view
-    if (result.text.length > 0) {
-      const name = state.profile.name || 'Agent';
-      this.eventBus.emit('agent:output', {
-        agentId,
-        data: `\x1b[33m🤖 ${name}:\x1b[0m ${result.text}\r\n\r\n`,
-      });
-    }
+    // Completion marker (output was already streamed via onOutput)
+    this.eventBus.emit('agent:executeOutput', {
+      agentId,
+      data: '\n\n---\n',
+    });
 
     this.updateVisualState(agentId, state.status === 'running' ? 'idle' : 'offline');
 
@@ -428,6 +471,69 @@ export class AgentManager {
   /** Check if an agent currently has a task in flight */
   isTaskRunning(agentId: AgentId): boolean {
     return this.abortControllers.has(agentId);
+  }
+
+  /** Enqueue a command for an agent. If idle, runs immediately.
+   *  If busy, queues the message and processes it when the current task finishes.
+   *  Returns the number of messages ahead in the queue (0 = running now). */
+  enqueueCommand(agentId: AgentId, text: string, source: 'text' | 'voice' = 'voice'): {
+    promise: Promise<{ success: boolean; text?: string; error?: string }>;
+    queuePosition: number;
+  } {
+    const queue = this.messageQueues.get(agentId) ?? [];
+    if (!this.messageQueues.has(agentId)) {
+      this.messageQueues.set(agentId, queue);
+    }
+
+    let resolve!: QueuedMessage['resolve'];
+    const promise = new Promise<{ success: boolean; text?: string; error?: string }>((r) => {
+      resolve = r;
+    });
+
+    queue.push({ text, source, resolve });
+    const queuePosition = queue.length - 1;
+
+    // Kick off processing if not already running
+    if (!this.processingLocks.has(agentId)) {
+      this.processQueue(agentId);
+    }
+
+    return { promise, queuePosition };
+  }
+
+  /** Get the number of queued messages for an agent */
+  getQueueLength(agentId: AgentId): number {
+    return this.messageQueues.get(agentId)?.length ?? 0;
+  }
+
+  /** Process queued messages sequentially */
+  private async processQueue(agentId: AgentId): Promise<void> {
+    if (this.processingLocks.has(agentId)) return;
+    this.processingLocks.add(agentId);
+
+    const queue = this.messageQueues.get(agentId);
+    while (queue && queue.length > 0) {
+      const msg = queue.shift()!;
+      try {
+        const result = await this.voiceCommand(agentId, msg.text, msg.source);
+        msg.resolve(result);
+      } catch (err) {
+        msg.resolve({ success: false, error: String(err) });
+      }
+
+      // Notify UI that queue advanced (so it can update queue count)
+      if (queue.length > 0) {
+        const state = this.agents.get(agentId);
+        this.eventBus.emit('agent:queueUpdate', {
+          agentId,
+          agentName: state?.profile.name ?? 'Agent',
+          remaining: queue.length,
+          nextCommand: queue[0].text.slice(0, 60),
+        });
+      }
+    }
+
+    this.processingLocks.delete(agentId);
   }
 
   /** Load conversation history across all (or one) agent(s), merged and sorted chronologically.
@@ -525,6 +631,16 @@ export class AgentManager {
   }
 
   stopAll(): void {
+    // Abort all running one-shot tasks (execute() child processes)
+    for (const [agentId, controller] of this.abortControllers) {
+      log.info(`Aborting running task for agent ${agentId} (shutdown)`);
+      controller.abort();
+    }
+    this.abortControllers.clear();
+    this.processingLocks.clear();
+    this.messageQueues.clear();
+
+    // Stop all PTY-based agents
     for (const [agentId, state] of this.agents) {
       if (state.status === 'running') {
         this.stop(agentId);

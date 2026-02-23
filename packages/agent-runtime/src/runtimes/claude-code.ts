@@ -122,22 +122,22 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
         }, { once: true });
       }
 
-      // Parse streaming JSONL events for progress reporting
+      // Parse streaming JSONL events for progress reporting + terminal output
       let lineBuf = '';
 
       child.stdout.on('data', (chunk: Buffer) => {
         const chunkStr = chunk.toString();
         stdout += chunkStr;
 
-        // Parse line-delimited JSON for progress events
-        if (options?.onProgress) {
+        if (options?.onProgress || options?.onOutput) {
           lineBuf += chunkStr;
           const lines = lineBuf.split('\n');
           lineBuf = lines.pop() ?? '';
 
           for (const line of lines) {
             if (!line.trim()) continue;
-            this.parseStreamEvent(line, options.onProgress);
+            if (options.onProgress) this.parseStreamEvent(line, options.onProgress);
+            if (options.onOutput) this.emitTerminalLine(line, options.onOutput);
           }
         }
       });
@@ -148,18 +148,20 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
 
       child.on('close', (code) => {
         // Parse any remaining buffered line
-        if (options?.onProgress && lineBuf.trim()) {
-          this.parseStreamEvent(lineBuf, options.onProgress);
+        if (lineBuf.trim()) {
+          if (options?.onProgress) this.parseStreamEvent(lineBuf, options.onProgress);
+          if (options?.onOutput) this.emitTerminalLine(lineBuf, options.onOutput);
         }
 
         if (code !== 0) {
-          // Claude Code sometimes puts errors in stdout (as JSON) rather than stderr
-          let errMsg = stderr.trim();
-          if (!errMsg) {
-            // Try to extract error from stdout JSON
-            errMsg = this.extractErrorFromOutput(stdout) ?? `Exit code ${code}`;
-          }
-          errMsg = errMsg.slice(0, 500);
+          // Log raw output for debugging
+          log.debug(`Execute stderr (${stderr.length} chars): ${stderr.slice(0, 300)}`, undefined, profile.id);
+          log.debug(`Execute stdout tail (${stdout.length} chars): ${stdout.slice(-500)}`, undefined, profile.id);
+
+          // Try all sources: stdout JSON first (most detailed), then stderr, then fallback
+          const stdoutErr = this.extractErrorFromOutput(stdout);
+          const stderrErr = stderr.trim();
+          const errMsg = (stdoutErr || stderrErr || `Exit code ${code}`).slice(0, 500);
           log.error(`Execute failed (exit ${code}): ${errMsg}`, undefined, profile.id);
           resolve({ success: false, text: '', error: errMsg });
           return;
@@ -225,6 +227,78 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
     }
   }
 
+  /** Convert a JSONL event into markdown-friendly text for streamdown rendering */
+  private emitTerminalLine(
+    line: string,
+    onOutput: (data: string) => void,
+  ): void {
+    try {
+      const raw = JSON.parse(line);
+      // Unwrap stream_event wrapper if present
+      const event = raw.type === 'stream_event' && raw.event ? raw.event : raw;
+
+      // Tool use — show as inline code block
+      if (event.type === 'tool_use' || event.tool_name) {
+        const toolName = event.tool_name ?? event.name ?? 'tool';
+        const input = event.input?.command ?? event.input?.file_path ?? '';
+        onOutput(`\n\`${toolName}\` ${input ? String(input).slice(0, 200) : ''}\n`);
+        return;
+      }
+      if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
+        const name = event.content_block.name ?? 'tool';
+        onOutput(`\n\`${name}\` `);
+        return;
+      }
+
+      // Tool result — show as code block
+      if (event.type === 'tool_result' || event.content_type === 'tool_result') {
+        const output = event.output ?? event.content ?? '';
+        if (output) onOutput(`\n\`\`\`\n${String(output).slice(0, 500)}\n\`\`\`\n`);
+        return;
+      }
+
+      // Text content delta — stream text as it arrives
+      if (event.type === 'content_block_delta') {
+        const text = event.delta?.text ?? event.delta?.thinking;
+        if (text) {
+          onOutput(text);
+          return;
+        }
+      }
+
+      // Thinking indicator
+      if (event.type === 'thinking' || (event.type === 'content_block_start' && event.content_block?.type === 'thinking')) {
+        onOutput('\n*thinking...*\n');
+        return;
+      }
+
+      // Assistant message — contains the full response (show result text)
+      if (event.type === 'assistant' && event.message?.content) {
+        for (const block of event.message.content) {
+          if (block.type === 'text' && block.text) {
+            onOutput(block.text);
+          } else if (block.type === 'tool_use') {
+            const input = block.input?.command ?? block.input?.file_path ?? '';
+            onOutput(`\n\`${block.name}\` ${input ? String(input).slice(0, 200) : ''}\n`);
+          }
+        }
+        return;
+      }
+
+      // Result event — show final result text
+      if (event.type === 'result' && event.result) {
+        onOutput(`\n${event.result}\n`);
+        return;
+      }
+
+      // system, message_start, message_stop, content_block_stop — skip silently
+    } catch {
+      // Not JSON — emit raw line as-is
+      const trimmed = line.trim();
+      if (trimmed) onOutput(trimmed + '\n');
+    }
+  }
+
   /** Build CLI args for one-shot `claude -p --output-format stream-json` */
   private buildOneShotArgs(profile: AgentProfile, sessionId?: string): string[] {
     const args: string[] = ['-p', '--verbose', '--output-format', 'stream-json'];
@@ -261,13 +335,25 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
     for (let i = lines.length - 1; i >= 0; i--) {
       try {
         const obj = JSON.parse(lines[i]);
+        // Direct error field
         if (obj.error) return typeof obj.error === 'string' ? obj.error : JSON.stringify(obj.error);
+        // Error event type
         if (obj.type === 'error' && obj.message) return obj.message;
+        // Result event with error
+        if (obj.type === 'result' && obj.is_error) {
+          return obj.result ?? obj.error ?? 'Unknown error in result';
+        }
+        // System error event
+        if (obj.type === 'system' && obj.error) return obj.error;
       } catch { /* skip non-JSON */ }
     }
-    // Fallback: return last non-empty line of raw output
-    const lastLine = stripAnsiSimple(stdout).trim().split('\n').pop()?.trim();
-    return lastLine || undefined;
+    // Fallback: last non-empty non-JSON line of raw output (skip trivial lines)
+    const stripped = stripAnsiSimple(stdout).trim();
+    const rawLines = stripped.split('\n').filter(l => {
+      const t = l.trim();
+      return t.length > 0 && t !== 'unknown' && !t.startsWith('{');
+    });
+    return rawLines.pop()?.trim() || undefined;
   }
 
   /** Parse streaming JSONL output — find the result event */

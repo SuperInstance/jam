@@ -5,6 +5,10 @@ import type { ChatMessage } from '@/store/chatSlice';
 
 interface ChatMessageProps {
   message: ChatMessage;
+  /** Called when user clicks "View output" — opens the thread drawer for this agent */
+  onViewOutput?: (agentId: string) => void;
+  /** Whether this agent's thread drawer is currently open */
+  isThreadOpen?: boolean;
 }
 
 const plugins = { code };
@@ -14,7 +18,7 @@ function formatTime(ts: number): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-export const ChatMessageView: React.FC<ChatMessageProps> = ({ message }) => {
+export const ChatMessageView: React.FC<ChatMessageProps> = ({ message, onViewOutput, isThreadOpen }) => {
   if (message.role === 'system') {
     return (
       <div className="flex justify-center mb-4">
@@ -50,7 +54,20 @@ export const ChatMessageView: React.FC<ChatMessageProps> = ({ message }) => {
       ? 'Claude Code'
       : message.agentRuntime === 'opencode'
         ? 'OpenCode'
-        : message.agentRuntime;
+        : message.agentRuntime === 'codex'
+          ? 'Codex CLI'
+          : message.agentRuntime === 'cursor'
+            ? 'Cursor'
+            : message.agentRuntime;
+
+  const runtimeBadgeClass =
+    message.agentRuntime === 'claude-code'
+      ? 'bg-orange-900/40 text-orange-400'
+      : message.agentRuntime === 'cursor'
+        ? 'bg-blue-900/40 text-blue-400'
+        : message.agentRuntime === 'codex'
+          ? 'bg-green-900/40 text-green-400'
+          : 'bg-zinc-800 text-zinc-400';
 
   return (
     <div className="flex mb-4 gap-3">
@@ -72,7 +89,7 @@ export const ChatMessageView: React.FC<ChatMessageProps> = ({ message }) => {
             {message.agentName ?? 'Agent'}
           </span>
           {runtimeLabel && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 font-mono">
+            <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${runtimeBadgeClass}`}>
               {runtimeLabel}
             </span>
           )}
@@ -103,6 +120,26 @@ export const ChatMessageView: React.FC<ChatMessageProps> = ({ message }) => {
             </div>
           )}
         </div>
+
+        {/* View output button — shown on agent messages when there's an agentId */}
+        {message.agentId && onViewOutput && (
+          <button
+            onClick={() => onViewOutput(message.agentId!)}
+            className={`
+              mt-1.5 flex items-center gap-1.5 text-[11px] transition-colors
+              ${isThreadOpen
+                ? 'text-blue-400'
+                : 'text-zinc-500 hover:text-zinc-300'
+              }
+            `}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="4 17 10 11 4 5" />
+              <line x1="12" y1="19" x2="20" y2="19" />
+            </svg>
+            {isThreadOpen ? 'Viewing output' : 'View output'}
+          </button>
+        )}
       </div>
     </div>
   );

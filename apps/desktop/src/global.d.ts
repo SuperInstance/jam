@@ -79,6 +79,9 @@ export interface JamAPI {
     onExit: (
       callback: (data: { agentId: string; exitCode: number }) => void,
     ) => () => void;
+    onExecuteOutput: (
+      callback: (data: { agentId: string; output: string; clear: boolean }) => void,
+    ) => () => void;
     getScrollback: (agentId: string) => Promise<string>;
   };
 
@@ -197,6 +200,20 @@ export interface JamAPI {
     ) => () => void;
   };
 
+  services: {
+    list: () => Promise<Array<{
+      agentId: string;
+      pid: number;
+      port?: number;
+      name: string;
+      logFile?: string;
+      startedAt: string;
+      alive?: boolean;
+    }>>;
+    stop: (pid: number) => Promise<{ success: boolean }>;
+    openUrl: (port: number) => Promise<{ success: boolean }>;
+  };
+
   chat: {
     sendCommand: (text: string) => Promise<{
       success: boolean;
@@ -206,6 +223,10 @@ export interface JamAPI {
       agentName?: string;
       agentRuntime?: string;
       agentColor?: string;
+    }>;
+    interruptAgent: (agentId: string) => Promise<{
+      success: boolean;
+      text?: string;
     }>;
     loadHistory: (options?: { agentId?: string; before?: string; limit?: number }) => Promise<{
       messages: Array<{
@@ -254,6 +275,16 @@ export interface JamAPI {
         agentColor: string;
         type: string;
         summary: string;
+      }) => void,
+    ) => () => void;
+    onMessageQueued: (
+      callback: (data: {
+        agentId: string;
+        agentName: string;
+        agentRuntime: string;
+        agentColor: string;
+        queuePosition: number;
+        command: string;
       }) => void,
     ) => () => void;
   };
