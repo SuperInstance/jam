@@ -16,6 +16,13 @@ export interface ChatMessage {
   source: 'text' | 'voice';
   timestamp: number;
   error?: string;
+  /** System task result — shown as compact notification with expandable output */
+  taskResult?: {
+    taskId: string;
+    title: string;
+    success: boolean;
+    summary: string;
+  };
 }
 
 export interface ChatSlice {
@@ -32,6 +39,7 @@ export interface ChatSlice {
   addMessage: (msg: ChatMessage) => void;
   prependMessages: (msgs: ChatMessage[]) => void;
   updateMessage: (id: string, updates: Partial<ChatMessage>) => void;
+  deleteMessage: (id: string) => void;
   clearMessages: () => void;
   setIsProcessing: (v: boolean, agentId?: string | null) => void;
   setThreadAgent: (agentId: string | null) => void;
@@ -69,6 +77,11 @@ export const createChatSlice: StateCreator<
       messages: state.messages.map((m) =>
         m.id === id ? { ...m, ...updates } : m,
       ),
+    })),
+
+  deleteMessage: (id) =>
+    set((state) => ({
+      messages: state.messages.filter((m) => m.id !== id),
     })),
 
   clearMessages: () =>
