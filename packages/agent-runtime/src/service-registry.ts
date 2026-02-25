@@ -8,6 +8,13 @@ const log = createLogger('ServiceRegistry');
 
 const SERVICES_FILE = '.services.json';
 
+/** Grace period (ms) after restart during which we trust the cache alive status */
+const RESTART_GRACE_MS = 10_000;
+/** How often the health monitor checks services (ms) */
+const HEALTH_CHECK_INTERVAL_MS = 8_000;
+/** Consecutive failures before marking a service as dead */
+const FAILURE_THRESHOLD = 3;
+
 export interface TrackedService {
   agentId: string;
   pid: number;
@@ -22,12 +29,15 @@ export interface TrackedService {
   cwd?: string;
 }
 
-/** Tracks background processes spawned by agents.
- *  Agents write to `.services.json` in their workspace directory.
- *  Jam reads these files to monitor, display, and clean up services. */
 export class ServiceRegistry {
   /** Cached services by agentId */
   private services = new Map<string, TrackedService[]>();
+  /** Track recently restarted services (name → timestamp) to avoid false-dead during startup */
+  private recentRestarts = new Map<string, number>();
+  /** Consecutive health check failures per service (key: "agentId:name") */
+  private failureCounts = new Map<string, number>();
+  /** Health monitor interval handle */
+  private healthInterval: ReturnType<typeof setInterval> | null = null;
 
   /** Scan an agent's workspace for `.services.json` and update cache.
    *  Checks both the root cwd and immediate subdirectories (agents may
@@ -67,11 +77,27 @@ export class ServiceRegistry {
           try {
             const raw = JSON.parse(line);
             if (!raw.pid || !raw.name) continue;
-            const alive = isProcessAlive(raw.pid);
+            const port = raw.port ?? undefined;
+
+            // Port is the primary indicator when available (PIDs can be stale
+            // if the process was restarted externally with a different PID).
+            let alive: boolean;
+            if (port) {
+              alive = await isPortAlive(port);
+            } else {
+              alive = isProcessAlive(raw.pid);
+            }
+
+            // During the grace period after restart, trust the process is alive
+            const restartedAt = this.recentRestarts.get(raw.name);
+            if (!alive && restartedAt && Date.now() - restartedAt < RESTART_GRACE_MS) {
+              alive = true;
+            }
+
             allEntries.push({
               agentId,
               pid: raw.pid,
-              port: raw.port ?? undefined,
+              port,
               name: raw.name,
               logFile: raw.logFile ?? undefined,
               startedAt: raw.startedAt ?? new Date().toISOString(),
@@ -140,15 +166,14 @@ export class ServiceRegistry {
       process.kill(pid, 'SIGTERM');
       log.info(`Stopped service PID ${pid}`);
       // Mark as dead in cache (keep the entry for restart)
-      for (const [agentId, services] of this.services) {
-        let changed = false;
+      for (const [, services] of this.services) {
         for (const svc of services) {
           if (svc.pid === pid) {
             svc.alive = false;
-            changed = true;
+            const key = `${svc.agentId}:${svc.name}`;
+            this.failureCounts.delete(key);
           }
         }
-        if (changed) this.services.set(agentId, services);
       }
       return true;
     } catch {
@@ -189,6 +214,11 @@ export class ServiceRegistry {
       entry.alive = true;
       entry.startedAt = new Date().toISOString();
 
+      // Mark grace period so health checks don't prematurely mark it dead
+      this.recentRestarts.set(entry.name, Date.now());
+      // Reset failure counter
+      this.failureCounts.delete(`${entry.agentId}:${entry.name}`);
+
       // Append new entry to .services.json
       const servicesFile = join(cwd, SERVICES_FILE);
       const line = JSON.stringify({
@@ -208,6 +238,71 @@ export class ServiceRegistry {
     }
   }
 
+  // ── Health Monitor ──────────────────────────────────────────────
+
+  /** Start the background health monitor.
+   *  Checks all cached services on an interval, using consecutive failure
+   *  thresholds to avoid flicker from transient check failures. */
+  startHealthMonitor(): void {
+    if (this.healthInterval) return;
+    log.info(`Health monitor started (interval=${HEALTH_CHECK_INTERVAL_MS}ms, threshold=${FAILURE_THRESHOLD})`);
+    this.healthInterval = setInterval(() => {
+      this.runHealthChecks().catch((err) =>
+        log.warn(`Health check error: ${String(err)}`),
+      );
+    }, HEALTH_CHECK_INTERVAL_MS);
+  }
+
+  /** Stop the background health monitor */
+  stopHealthMonitor(): void {
+    if (this.healthInterval) {
+      clearInterval(this.healthInterval);
+      this.healthInterval = null;
+      log.info('Health monitor stopped');
+    }
+  }
+
+  /** Run a single health check cycle across all cached services */
+  private async runHealthChecks(): Promise<void> {
+    for (const [, services] of this.services) {
+      for (const svc of services) {
+        const key = `${svc.agentId}:${svc.name}`;
+
+        // Skip services in restart grace period
+        const restartedAt = this.recentRestarts.get(svc.name);
+        if (restartedAt && Date.now() - restartedAt < RESTART_GRACE_MS) {
+          continue;
+        }
+
+        // Port is the primary indicator when available (PIDs can be stale)
+        let healthy: boolean;
+        if (svc.port) {
+          healthy = await isPortAlive(svc.port);
+        } else {
+          healthy = isProcessAlive(svc.pid);
+        }
+
+        if (healthy) {
+          // Service is up — reset failure count and mark alive
+          if (!svc.alive) {
+            log.info(`Service "${svc.name}" (PID ${svc.pid}) is now alive`);
+          }
+          svc.alive = true;
+          this.failureCounts.delete(key);
+        } else {
+          // Service check failed — increment failure counter
+          const failures = (this.failureCounts.get(key) ?? 0) + 1;
+          this.failureCounts.set(key, failures);
+
+          if (failures >= FAILURE_THRESHOLD && svc.alive !== false) {
+            log.warn(`Service "${svc.name}" (PID ${svc.pid}) marked dead after ${failures} consecutive failures`);
+            svc.alive = false;
+          }
+        }
+      }
+    }
+  }
+
   /** Stop all tracked services for a specific agent */
   stopForAgent(agentId: string): void {
     const services = this.services.get(agentId) ?? [];
@@ -222,11 +317,12 @@ export class ServiceRegistry {
 
   /** Stop ALL tracked services across all agents */
   stopAll(): void {
-    for (const [agentId, services] of this.services) {
+    this.stopHealthMonitor();
+    for (const [aid, services] of this.services) {
       for (const svc of services) {
         try {
           process.kill(svc.pid, 'SIGTERM');
-          log.info(`Stopped service "${svc.name}" (PID ${svc.pid}) for agent ${agentId}`);
+          log.info(`Stopped service "${svc.name}" (PID ${svc.pid}) for agent ${aid}`);
         } catch { /* already dead */ }
       }
     }
@@ -234,7 +330,7 @@ export class ServiceRegistry {
   }
 }
 
-/** Check if a process is alive */
+/** Check if a process is alive via PID signal check */
 function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -242,4 +338,18 @@ function isProcessAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+/** Check if a port is reachable via TCP connect (health check) */
+function isPortAlive(port: number, timeoutMs = 2000): Promise<boolean> {
+  const { createConnection } = require('node:net') as typeof import('node:net');
+  return new Promise((resolve) => {
+    const socket = createConnection({ port, host: '127.0.0.1' }, () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.setTimeout(timeoutMs);
+    socket.on('timeout', () => { socket.destroy(); resolve(false); });
+    socket.on('error', () => { resolve(false); });
+  });
 }

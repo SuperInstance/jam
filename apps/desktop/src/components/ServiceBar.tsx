@@ -56,7 +56,9 @@ export const ServicePanel: React.FC = () => {
 
   const handleRestart = async (serviceName: string) => {
     await window.jam.services.restart(serviceName);
-    setTimeout(refresh, 1000);
+    // Refresh quickly for immediate feedback, then again for slower services
+    setTimeout(refresh, 500);
+    setTimeout(refresh, 3000);
   };
 
   const handleOpen = (port: number) => {

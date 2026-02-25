@@ -731,6 +731,7 @@ export class Orchestrator {
 
     // Initial scan for background services agents may have left running
     this.scanServices();
+    this.serviceRegistry.startHealthMonitor();
 
     // Start team services
     this.teamEventHandler.start();
