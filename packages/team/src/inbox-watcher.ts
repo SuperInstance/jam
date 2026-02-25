@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ITaskStore, IEventBus } from '@jam/core';
 import { Events, createLogger } from '@jam/core';
+import { DebouncedFileWriter } from './utils/debounced-writer.js';
 
 const log = createLogger('InboxWatcher');
 
@@ -14,6 +15,10 @@ const log = createLogger('InboxWatcher');
 export class InboxWatcher {
   private watchers: Map<string, FSWatcher> = new Map();
   private offsets: Map<string, number> = new Map();
+  /** Per-path debounce — coalesces rapid fs events into a single processInbox call */
+  private debouncers: Map<string, DebouncedFileWriter> = new Map();
+  /** Guard flag to ignore watch events caused by our own writes */
+  private processing: Set<string> = new Set();
 
   constructor(
     private readonly taskStore: ITaskStore,
@@ -27,8 +32,13 @@ export class InboxWatcher {
     this.offsets.set(inboxPath, 0);
 
     try {
+      const debouncer = new DebouncedFileWriter(100);
+      this.debouncers.set(inboxPath, debouncer);
+
       const watcher = watch(inboxPath, () => {
-        this.processInbox(agentId, inboxPath);
+        // Skip events triggered by our own writes
+        if (this.processing.has(inboxPath)) return;
+        debouncer.schedule(() => this.processInbox(agentId, inboxPath));
       });
       this.watchers.set(agentId, watcher);
     } catch {
@@ -48,6 +58,11 @@ export class InboxWatcher {
     for (const [id] of this.watchers) {
       this.unwatchAgent(id);
     }
+    for (const debouncer of this.debouncers.values()) {
+      debouncer.cancel();
+    }
+    this.debouncers.clear();
+    this.processing.clear();
   }
 
   private async processInbox(
@@ -118,10 +133,13 @@ export class InboxWatcher {
         }
       }
 
-      // Clear processed inbox
+      // Clear processed inbox (guard to prevent re-triggering watcher)
       if (lines.length > 0) {
+        this.processing.add(inboxPath);
         await writeFile(inboxPath, '', 'utf-8');
         this.offsets.set(inboxPath, 0);
+        // Release guard after fs events settle
+        setTimeout(() => this.processing.delete(inboxPath), 200);
       }
     } catch {
       // inbox file may not exist yet

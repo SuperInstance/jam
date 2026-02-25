@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { createLogger } from '@jam/core';
+import treeKill from 'tree-kill';
 
 const log = createLogger('ServiceRegistry');
 
@@ -159,7 +160,10 @@ export class ServiceRegistry {
       return false;
     }
     try {
-      process.kill(pid, 'SIGTERM');
+      // Kill entire process tree — services may have spawned children
+      treeKill(pid, 'SIGTERM', (err) => {
+        if (err) log.warn(`tree-kill failed for service on port ${port} (PID ${pid}): ${err.message}`);
+      });
       log.info(`Stopped service on port ${port} (PID ${pid})`);
       // Mark as dead in cache (keep the entry for restart)
       for (const [, services] of this.services) {
@@ -311,15 +315,15 @@ export class ServiceRegistry {
     this.services.clear();
   }
 
-  /** Safely kill a service by finding the PID listening on its port */
+  /** Safely kill a service process tree by finding the PID listening on its port */
   private async killServiceByPort(port: number, name: string): Promise<void> {
     const pid = await findPidByPort(port);
     if (!pid) return;
 
-    try {
-      process.kill(pid, 'SIGTERM');
-      log.info(`Stopped service "${name}" (PID ${pid}, port ${port})`);
-    } catch { /* already dead */ }
+    treeKill(pid, 'SIGTERM', (err) => {
+      if (err) log.warn(`tree-kill failed for "${name}" (PID ${pid}, port ${port}): ${err.message}`);
+      else log.info(`Stopped service "${name}" (PID ${pid}, port ${port})`);
+    });
   }
 }
 

@@ -1,6 +1,7 @@
 import type { AgentId } from '@jam/core';
 import { createLogger } from '@jam/core';
 import type * as pty from 'node-pty';
+import treeKill from 'tree-kill';
 import { buildCleanEnv } from './utils.js';
 
 const log = createLogger('PtyManager');
@@ -195,8 +196,13 @@ export class PtyManager {
   kill(agentId: AgentId): void {
     const instance = this.instances.get(agentId);
     if (instance) {
-      instance.process.kill();
+      const pid = instance.process.pid;
       this.instances.delete(agentId);
+      // Kill the entire process tree (shell + all children spawned by the agent)
+      // Uses pgrep -P on macOS to recursively find descendants, like VS Code's terminateProcess.sh
+      treeKill(pid, 'SIGTERM', (err) => {
+        if (err) log.warn(`tree-kill failed for PID ${pid}: ${err.message}`, undefined, agentId);
+      });
     }
   }
 

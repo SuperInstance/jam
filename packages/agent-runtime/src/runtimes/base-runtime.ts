@@ -10,6 +10,7 @@ import type {
   RuntimeMetadata,
 } from '@jam/core';
 import { createLogger } from '@jam/core';
+import treeKill from 'tree-kill';
 import { buildCleanEnv } from '../utils.js';
 import type { OutputStrategy } from './output-strategy.js';
 
@@ -71,10 +72,12 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
       // Write input via hook (stdin by default, CLI arg for Codex)
       this.writeInput(child, profile, text);
 
-      // Abort signal support
+      // Abort signal support — kill entire process tree on abort
       if (options?.signal) {
         options.signal.addEventListener('abort', () => {
-          child.kill('SIGTERM');
+          if (child.pid) {
+            treeKill(child.pid, 'SIGTERM');
+          }
         }, { once: true });
       }
 

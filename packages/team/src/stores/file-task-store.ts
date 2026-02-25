@@ -1,7 +1,8 @@
-import { readFile, writeFile, mkdir, appendFile } from 'node:fs/promises';
+import { readFile, appendFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Task, ITaskStore, TaskFilter } from '@jam/core';
+import { DebouncedFileWriter, writeJsonFile } from '../utils/debounced-writer.js';
 
 /** Tasks completed/failed/cancelled older than 7 days get archived */
 const ARCHIVE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -9,7 +10,7 @@ const ARCHIVE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 export class FileTaskStore implements ITaskStore {
   private readonly filePath: string;
   private cache: Map<string, Task> | null = null;
-  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly writer = new DebouncedFileWriter(500);
   private needsFlush = false;
 
   constructor(baseDir: string) {
@@ -110,17 +111,17 @@ export class FileTaskStore implements ITaskStore {
   }
 
   private scheduleFlush(): void {
-    if (this.flushTimer) return;
-    this.flushTimer = setTimeout(() => this.flush(), 500);
+    this.writer.schedule(() => this.flush());
   }
 
   private async flush(): Promise<void> {
-    this.flushTimer = null;
     if (!this.cache) return;
-
-    const dir = join(this.filePath, '..');
-    await mkdir(dir, { recursive: true });
     const arr = Array.from(this.cache.values());
-    await writeFile(this.filePath, JSON.stringify(arr), 'utf-8');
+    await writeJsonFile(this.filePath, arr);
+  }
+
+  /** Force-flush pending writes (call before shutdown). */
+  async stop(): Promise<void> {
+    await this.writer.flushNow(() => this.flush());
   }
 }

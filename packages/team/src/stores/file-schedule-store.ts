@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { createLogger } from '@jam/core';
 import type { SchedulePattern } from '../task-scheduler.js';
 import type { Task } from '@jam/core';
+import { DebouncedFileWriter, writeJsonFile } from '../utils/debounced-writer.js';
 
 const log = createLogger('FileScheduleStore');
 
@@ -28,7 +29,7 @@ export interface PersistedSchedule {
 export class FileScheduleStore {
   private schedules: PersistedSchedule[] = [];
   private loaded = false;
-  private writeTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly writer = new DebouncedFileWriter(500);
   private readonly filePath: string;
 
   constructor(baseDir: string) {
@@ -127,17 +128,19 @@ export class FileScheduleStore {
   }
 
   private debouncedWrite(): void {
-    if (this.writeTimer) clearTimeout(this.writeTimer);
-    this.writeTimer = setTimeout(() => this.flush(), 500);
+    this.writer.schedule(() => this.flush());
   }
 
   private async flush(): Promise<void> {
     try {
-      const dir = join(this.filePath, '..');
-      await mkdir(dir, { recursive: true });
-      await writeFile(this.filePath, JSON.stringify(this.schedules, null, 2), 'utf-8');
+      await writeJsonFile(this.filePath, this.schedules);
     } catch (error) {
       log.error(`Failed to write schedules: ${String(error)}`);
     }
+  }
+
+  /** Force-flush pending writes (call before shutdown). */
+  async stop(): Promise<void> {
+    await this.writer.flushNow(() => this.flush());
   }
 }

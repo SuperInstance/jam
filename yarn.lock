@@ -617,6 +617,7 @@ __metadata:
     "@types/uuid": "npm:^10.0.0"
     node-pty: "npm:^1.0.0"
     rimraf: "npm:^5.0.5"
+    tree-kill: "npm:^1.2.2"
     typescript: "npm:^5.9.3"
     uuid: "npm:^11.1.0"
   languageName: unknown

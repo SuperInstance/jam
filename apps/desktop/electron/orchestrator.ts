@@ -762,6 +762,12 @@ export class Orchestrator {
     this.teamEventHandler.stop();
     this.taskScheduler.stop();
     this.inboxWatcher.stopAll();
+
+    // Flush pending store writes before killing processes
+    this.taskStore.stop().catch(() => {});
+    this.statsStore.stop().catch(() => {});
+    this.scheduleStore.stop().catch(() => {});
+
     this.agentManager.stopHealthCheck();
     this.agentManager.stopAll();
     this.serviceRegistry.stopAll().catch(() => {});

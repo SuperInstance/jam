@@ -1,6 +1,7 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AgentStats, IStatsStore } from '@jam/core';
+import { DebouncedFileWriter, writeJsonFile } from '../utils/debounced-writer.js';
 
 function defaultStats(agentId: string): AgentStats {
   return {
@@ -20,7 +21,7 @@ function defaultStats(agentId: string): AgentStats {
 export class FileStatsStore implements IStatsStore {
   private readonly baseDir: string;
   private cache: Map<string, AgentStats> = new Map();
-  private flushTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private writers: Map<string, DebouncedFileWriter> = new Map();
 
   constructor(baseDir: string) {
     this.baseDir = join(baseDir, 'stats');
@@ -101,20 +102,26 @@ export class FileStatsStore implements IStatsStore {
   }
 
   private scheduleFlush(agentId: string): void {
-    if (this.flushTimers.has(agentId)) return;
-    this.flushTimers.set(
-      agentId,
-      setTimeout(() => this.flush(agentId), 500),
-    );
+    let writer = this.writers.get(agentId);
+    if (!writer) {
+      writer = new DebouncedFileWriter(500);
+      this.writers.set(agentId, writer);
+    }
+    writer.schedule(() => this.flush(agentId));
   }
 
   private async flush(agentId: string): Promise<void> {
-    this.flushTimers.delete(agentId);
     const stats = this.cache.get(agentId);
     if (!stats) return;
-
-    await mkdir(this.baseDir, { recursive: true });
     const filePath = join(this.baseDir, `${agentId}.json`);
-    await writeFile(filePath, JSON.stringify(stats), 'utf-8');
+    await writeJsonFile(filePath, stats);
+  }
+
+  /** Force-flush all pending writes (call before shutdown). */
+  async stop(): Promise<void> {
+    const flushes = Array.from(this.writers.entries()).map(([agentId, writer]) =>
+      writer.flushNow(() => this.flush(agentId)),
+    );
+    await Promise.all(flushes);
   }
 }
