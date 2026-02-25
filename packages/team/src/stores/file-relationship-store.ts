@@ -105,6 +105,6 @@ export class FileRelationshipStore implements IRelationshipStore {
     this.cache.set(agentId, rels);
     await mkdir(this.baseDir, { recursive: true });
     const filePath = join(this.baseDir, `${agentId}.json`);
-    await writeFile(filePath, JSON.stringify(rels, null, 2), 'utf-8');
+    await writeFile(filePath, JSON.stringify(rels), 'utf-8');
   }
 }

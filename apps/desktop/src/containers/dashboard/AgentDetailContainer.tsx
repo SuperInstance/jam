@@ -81,11 +81,15 @@ export function AgentDetailContainer({ agentId }: AgentDetailContainerProps) {
       notes: r.notes,
     }));
 
-  const agentMap = Object.fromEntries(
-    Object.values(agents).map((a) => [
-      a.profile.id,
-      { name: a.profile.name, color: a.profile.color },
-    ]),
+  const agentMap = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.values(agents).map((a) => [
+          a.profile.id,
+          { name: a.profile.name, color: a.profile.color },
+        ]),
+      ),
+    [agents],
   );
 
   // Derive activity log from tasks involving this agent

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useAppStore } from '@/store';
 import { TeamOverviewContainer } from './TeamOverviewContainer';
 import { TaskBoardContainer } from './TaskBoardContainer';
@@ -29,11 +29,15 @@ export function DashboardContainer() {
   ];
 
   // Sorted agent list for the sidebar (non-system agents first, then system)
-  const agentList = Object.values(agents).sort((a, b) => {
-    if (a.profile.isSystem && !b.profile.isSystem) return 1;
-    if (!a.profile.isSystem && b.profile.isSystem) return -1;
-    return a.profile.name.localeCompare(b.profile.name);
-  });
+  const agentList = useMemo(
+    () =>
+      Object.values(agents).sort((a, b) => {
+        if (a.profile.isSystem && !b.profile.isSystem) return 1;
+        if (!a.profile.isSystem && b.profile.isSystem) return -1;
+        return a.profile.name.localeCompare(b.profile.name);
+      }),
+    [agents],
+  );
 
   return (
     <div className="flex flex-col h-full bg-zinc-900">

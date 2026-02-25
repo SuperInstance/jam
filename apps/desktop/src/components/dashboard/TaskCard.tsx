@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { formatTimeAgo, formatElapsed } from '@/utils/format';
 
 interface TaskCardProps {
   task: {
@@ -18,30 +19,6 @@ interface TaskCardProps {
   onDelete?: (taskId: string) => void;
   onCancel?: (taskId: string) => void;
   onAssign?: (taskId: string, agentId: string) => void;
-}
-
-function formatTime(iso: string): string {
-  const d = new Date(iso);
-  const now = new Date();
-  const diff = now.getTime() - d.getTime();
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
-function formatElapsed(startIso: string): string {
-  const diff = Date.now() - new Date(startIso).getTime();
-  const secs = Math.floor(diff / 1000);
-  if (secs < 60) return `${secs}s`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ${secs % 60}s`;
-  const hours = Math.floor(mins / 60);
-  return `${hours}h ${mins % 60}m`;
 }
 
 const priorityStyles: Record<string, string> = {
@@ -237,10 +214,10 @@ export function TaskCard({ task, agentName, agentColor, agents, onDelete, onCanc
 
       {/* Timestamps */}
       <div className="text-[10px] text-zinc-600 space-y-0.5 mt-1">
-        <div>Created {formatTime(task.createdAt)}</div>
+        <div>Created {formatTimeAgo(task.createdAt)}</div>
         {task.completedAt && (
           <div>
-            {task.status === 'failed' ? 'Failed' : task.status === 'cancelled' ? 'Cancelled' : 'Done'} {formatTime(task.completedAt)}
+            {task.status === 'failed' ? 'Failed' : task.status === 'cancelled' ? 'Cancelled' : 'Done'} {formatTimeAgo(task.completedAt)}
           </div>
         )}
       </div>

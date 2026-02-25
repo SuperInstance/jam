@@ -26,7 +26,10 @@ export const useAppStore = create<AppStore>()(
     {
       name: 'jam-ui-store',
       partialize: (state) => ({
-        settings: state.settings,
+        voiceMode: state.voiceMode,
+        navExpanded: state.navExpanded,
+        logsDrawerOpen: state.logsDrawerOpen,
+        viewMode: state.viewMode,
       }),
     },
   ),

@@ -10,7 +10,7 @@ import type {
 import { stripAnsiSimple } from '../utils.js';
 import { BaseAgentRuntime } from './base-runtime.js';
 import { JsonlOutputStrategy } from './output-strategy.js';
-import { parseJsonlStreamEvent, emitJsonlTerminalLine, parseJsonlResult } from './jsonl-parser.js';
+import { parseJsonlStreamEvent, emitJsonlTerminalLine, parseJsonlResult, hasResultEvent } from './jsonl-parser.js';
 
 export class CursorRuntime extends BaseAgentRuntime {
   readonly runtimeId = 'cursor';
@@ -95,7 +95,7 @@ export class CursorRuntime extends BaseAgentRuntime {
     if (code !== 0) {
       // If the JSONL stream has a valid result, trust it over the exit code
       const parsed = parseJsonlResult(stdout);
-      if (parsed.text && parsed.text.length > 0) {
+      if (parsed.sessionId || hasResultEvent(stdout)) {
         return parsed;
       }
 

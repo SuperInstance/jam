@@ -5,12 +5,10 @@ export type VoiceMode = 'push-to-talk' | 'always-listening';
 export type ViewMode = 'chat' | 'stage' | 'compact';
 
 export interface SettingsSlice {
-  settings: {
-    voiceMode: VoiceMode;
-    navExpanded: boolean;
-    logsDrawerOpen: boolean;
-    viewMode: ViewMode;
-  };
+  voiceMode: VoiceMode;
+  navExpanded: boolean;
+  logsDrawerOpen: boolean;
+  viewMode: ViewMode;
 
   setNavExpanded: (expanded: boolean) => void;
   setLogsDrawerOpen: (open: boolean) => void;
@@ -24,30 +22,13 @@ export const createSettingsSlice: StateCreator<
   [],
   SettingsSlice
 > = (set) => ({
-  settings: {
-    voiceMode: 'always-listening',
-    navExpanded: false,
-    logsDrawerOpen: false,
-    viewMode: 'chat',
-  },
+  voiceMode: 'always-listening',
+  navExpanded: false,
+  logsDrawerOpen: false,
+  viewMode: 'chat',
 
-  setNavExpanded: (expanded) =>
-    set((state) => ({
-      settings: { ...state.settings, navExpanded: expanded },
-    })),
-
-  setLogsDrawerOpen: (open) =>
-    set((state) => ({
-      settings: { ...state.settings, logsDrawerOpen: open },
-    })),
-
-  setVoiceMode: (mode) =>
-    set((state) => ({
-      settings: { ...state.settings, voiceMode: mode },
-    })),
-
-  setViewMode: (mode) =>
-    set((state) => ({
-      settings: { ...state.settings, viewMode: mode },
-    })),
+  setNavExpanded: (expanded) => set({ navExpanded: expanded }),
+  setLogsDrawerOpen: (open) => set({ logsDrawerOpen: open }),
+  setVoiceMode: (mode) => set({ voiceMode: mode }),
+  setViewMode: (mode) => set({ viewMode: mode }),
 });

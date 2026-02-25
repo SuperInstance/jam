@@ -1,16 +1,5 @@
-/** Format token count: 1234 → "1.2K", 1234567 → "1.2M" */
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
-
-/** Estimate cost in USD from token counts.
- *  Uses blended rates across providers — good enough for an estimate.
- *  Input: $3/M tokens, Output: $15/M tokens (Claude Sonnet ballpark) */
-function estimateCost(tokensIn: number, tokensOut: number): number {
-  return (tokensIn * 3 + tokensOut * 15) / 1_000_000;
-}
+import React from 'react';
+import { formatTokens, estimateCost } from '@/utils/format';
 
 interface AgentStatCardProps {
   agent: { id: string; name: string; color: string; status: string; role?: string };
@@ -25,7 +14,7 @@ interface AgentStatCardProps {
   onClick: () => void;
 }
 
-export function AgentStatCard({ agent, stats, onClick }: AgentStatCardProps) {
+export const AgentStatCard = React.memo(function AgentStatCard({ agent, stats, onClick }: AgentStatCardProps) {
   const totalTokens = stats ? stats.totalTokensIn + stats.totalTokensOut : 0;
   const cost = stats ? estimateCost(stats.totalTokensIn, stats.totalTokensOut) : 0;
 
@@ -105,4 +94,4 @@ export function AgentStatCard({ agent, stats, onClick }: AgentStatCardProps) {
       )}
     </div>
   );
-}
+});

@@ -36,7 +36,7 @@ export class FileCommunicationHub implements ICommunicationHub {
 
     const dir = join(this.channelsDir, channel.id);
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, 'meta.json'), JSON.stringify(channel, null, 2), 'utf-8');
+    await writeFile(join(dir, 'meta.json'), JSON.stringify(channel), 'utf-8');
 
     if (this.channelCache) {
       this.channelCache.set(channel.id, channel);

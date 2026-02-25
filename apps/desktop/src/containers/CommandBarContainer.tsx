@@ -22,7 +22,7 @@ export const CommandBarContainer: React.FC = () => {
   } = useVoice();
   const { sendTextCommand, interruptAgent, clearChat } = useOrchestrator();
   const isProcessing = useAppStore((s) => s.isProcessing);
-  const viewMode = useAppStore((s) => s.settings.viewMode);
+  const viewMode = useAppStore((s) => s.viewMode);
   const setViewMode = useAppStore((s) => s.setViewMode);
   const [textInput, setTextInput] = useState('');
 

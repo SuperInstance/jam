@@ -115,6 +115,6 @@ export class FileStatsStore implements IStatsStore {
 
     await mkdir(this.baseDir, { recursive: true });
     const filePath = join(this.baseDir, `${agentId}.json`);
-    await writeFile(filePath, JSON.stringify(stats, null, 2), 'utf-8');
+    await writeFile(filePath, JSON.stringify(stats), 'utf-8');
   }
 }

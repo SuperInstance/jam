@@ -2,8 +2,7 @@ import { useEffect } from 'react';
 import { useAppStore } from '@/store';
 import type { AgentEntry } from '@/store/agentSlice';
 import type { ChatMessage } from '@/store/chatSlice';
-import type { TaskEntry } from '@/store/taskSlice';
-import type { StatsEntry, RelationshipEntry, SoulEntry, ChannelEntry, ChannelMessageEntry } from '@/store/teamSlice';
+import type { SoulEntry } from '@/store/teamSlice';
 
 /**
  * Subscribes to all IPC events from the main process and dispatches to Zustand store.
@@ -22,14 +21,8 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
   const setAgentActive = useAppStore((s) => s.setAgentActive);
   const addMessage = useAppStore((s) => s.addMessage);
 
-  // Team system store actions
-  const addTask = useAppStore((s) => s.addTask);
-  const updateTask = useAppStore((s) => s.updateTask);
-  const setStats = useAppStore((s) => s.setStats);
-  const addRelationship = useAppStore((s) => s.addRelationship);
+  // Soul evolved — global listener to clear reflecting state across tabs
   const setSoul = useAppStore((s) => s.setSoul);
-  const setChannels = useAppStore((s) => s.setChannels);
-  const addChannelMessage = useAppStore((s) => s.addChannelMessage);
 
   useEffect(() => {
     // Load initial agent list, then load conversation history
@@ -278,45 +271,15 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
       },
     );
 
-    // --- Team system event subscriptions ---
-
-    // Load initial team data
-    window.jam.team.channels.list().then((result: unknown) => {
-      setChannels(result as ChannelEntry[]);
-    });
-
-    const unsubTaskCreated = window.jam.tasks.onCreated((data) => {
-      addTask(data.task as unknown as TaskEntry);
-    });
-
-    const unsubTaskUpdated = window.jam.tasks.onUpdated((data) => {
-      updateTask(data.task as unknown as TaskEntry);
-    });
-
-    const unsubTaskCompleted = window.jam.tasks.onCompleted((data) => {
-      updateTask(data.task as unknown as TaskEntry);
-    });
-
-    const unsubStatsUpdated = window.jam.team.stats.onUpdated((data) => {
-      setStats(data.agentId, data.stats as unknown as StatsEntry);
-    });
-
-    const unsubTrustUpdated = window.jam.team.relationships.onTrustUpdated((data) => {
-      addRelationship(data.relationship as unknown as RelationshipEntry);
-    });
-
+    // Soul evolved — global listener (clear reflecting state even when not viewing agent detail)
     const unsubSoulEvolved = window.jam.team.soul.onEvolved((data) => {
       setSoul(data.agentId, data.soul as unknown as SoulEntry);
-      // Clear reflecting state globally (persists across tab switches)
       useAppStore.getState().setReflecting(data.agentId, false);
     });
 
-    const unsubChannelMessage = window.jam.team.channels.onMessageReceived((data) => {
-      addChannelMessage(
-        (data.channel as unknown as ChannelEntry).id,
-        data.message as unknown as ChannelMessageEntry,
-      );
-    });
+    // NOTE: Task, stats, relationship, and channel subscriptions are owned by
+    // their dedicated hooks (useTasks, useTeamStats, useChannels) — not here.
+    // This prevents double-handling IPC events.
 
     return () => {
       unsubStatusChange();
@@ -336,13 +299,7 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
       unsubProgress();
       unsubQueued();
       unsubSystemNotification();
-      unsubTaskCreated();
-      unsubTaskUpdated();
-      unsubTaskCompleted();
-      unsubStatsUpdated();
-      unsubTrustUpdated();
       unsubSoulEvolved();
-      unsubChannelMessage();
     };
   }, [
     setAgents,
@@ -357,12 +314,6 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
     setAgentActive,
     addMessage,
     enqueueTTS,
-    addTask,
-    updateTask,
-    setStats,
-    addRelationship,
     setSoul,
-    setChannels,
-    addChannelMessage,
   ]);
 }

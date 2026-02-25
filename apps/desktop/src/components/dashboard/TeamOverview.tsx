@@ -1,15 +1,6 @@
 import { useMemo } from 'react';
 import { AgentStatCard } from '@/components/dashboard/AgentStatCard';
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
-
-function estimateCost(tokensIn: number, tokensOut: number): number {
-  return (tokensIn * 3 + tokensOut * 15) / 1_000_000;
-}
+import { formatTokens, estimateCost } from '@/utils/format';
 
 interface StatEntry {
   tasksCompleted: number;

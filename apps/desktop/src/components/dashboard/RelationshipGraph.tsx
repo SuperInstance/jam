@@ -1,3 +1,5 @@
+import React from 'react';
+
 interface RelationshipGraphProps {
   agents: Array<{ id: string; name: string; color: string }>;
   relationships: Array<{
@@ -18,7 +20,7 @@ function getTrustWidth(trust: number): number {
   return 1 + trust * 2;
 }
 
-export function RelationshipGraph({
+export const RelationshipGraph = React.memo(function RelationshipGraph({
   agents,
   relationships,
   onSelectAgent,
@@ -103,4 +105,4 @@ export function RelationshipGraph({
       </svg>
     </div>
   );
-}
+});

@@ -50,6 +50,11 @@ export function TaskBoard({ tasks, agents, onUpdateStatus, onAssign, onDelete, o
     return acc;
   }, {});
 
+  // Sort each column newest-first so latest tasks appear at the top
+  for (const col of Object.values(grouped)) {
+    col.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
   const doneTaskIds = (grouped['done'] ?? []).map((t) => t.id);
 
   const handleDragOver = useCallback((e: React.DragEvent, colKey: string, droppable: boolean) => {

@@ -1,12 +1,16 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile, writeFile, mkdir, appendFile } from 'node:fs/promises';
+import { join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Task, ITaskStore, TaskFilter } from '@jam/core';
+
+/** Tasks completed/failed/cancelled older than 7 days get archived */
+const ARCHIVE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export class FileTaskStore implements ITaskStore {
   private readonly filePath: string;
   private cache: Map<string, Task> | null = null;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private needsFlush = false;
 
   constructor(baseDir: string) {
     this.filePath = join(baseDir, 'tasks', 'tasks.json');
@@ -71,7 +75,34 @@ export class FileTaskStore implements ITaskStore {
     try {
       const data = await readFile(this.filePath, 'utf-8');
       const arr: Task[] = JSON.parse(data);
-      this.cache = new Map(arr.map((t) => [t.id, t]));
+
+      // Archive old completed/failed/cancelled tasks
+      const cutoff = Date.now() - ARCHIVE_AGE_MS;
+      const active: Task[] = [];
+      const archived: Task[] = [];
+      for (const t of arr) {
+        const isDone = t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled';
+        const isOld = t.completedAt && new Date(t.completedAt).getTime() < cutoff;
+        if (isDone && isOld) {
+          archived.push(t);
+        } else {
+          active.push(t);
+        }
+      }
+
+      if (archived.length > 0) {
+        const archivePath = join(dirname(this.filePath), 'tasks-archive.jsonl');
+        const lines = archived.map(t => JSON.stringify(t)).join('\n') + '\n';
+        await appendFile(archivePath, lines, 'utf-8');
+        this.needsFlush = true;
+      }
+
+      this.cache = new Map(active.map((t) => [t.id, t]));
+
+      if (this.needsFlush) {
+        this.needsFlush = false;
+        this.scheduleFlush();
+      }
     } catch {
       this.cache = new Map();
     }
@@ -90,6 +121,6 @@ export class FileTaskStore implements ITaskStore {
     const dir = join(this.filePath, '..');
     await mkdir(dir, { recursive: true });
     const arr = Array.from(this.cache.values());
-    await writeFile(this.filePath, JSON.stringify(arr, null, 2), 'utf-8');
+    await writeFile(this.filePath, JSON.stringify(arr), 'utf-8');
   }
 }

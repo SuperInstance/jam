@@ -19,11 +19,11 @@ import { useIPCSubscriptions } from '@/hooks/useIPCSubscriptions';
 import { NotificationPanel } from '@/components/NotificationPanel';
 
 export default function App() {
-  const navExpanded = useAppStore((s) => s.settings.navExpanded);
+  const navExpanded = useAppStore((s) => s.navExpanded);
   const setNavExpanded = useAppStore((s) => s.setNavExpanded);
-  const logsDrawerOpen = useAppStore((s) => s.settings.logsDrawerOpen);
+  const logsDrawerOpen = useAppStore((s) => s.logsDrawerOpen);
   const setLogsDrawerOpen = useAppStore((s) => s.setLogsDrawerOpen);
-  const viewMode = useAppStore((s) => s.settings.viewMode);
+  const viewMode = useAppStore((s) => s.viewMode);
   const threadAgentId = useAppStore((s) => s.threadAgentId);
   const setThreadAgent = useAppStore((s) => s.setThreadAgent);
   const [activeTab, setActiveTab] = useState<NavTab>('chat');

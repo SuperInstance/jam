@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useAppStore } from '@/store';
 import { useTeamStats } from '@/hooks/useTeamStats';
 import { TeamOverview } from '@/components/dashboard/TeamOverview';
@@ -15,17 +15,19 @@ export function TeamOverviewContainer({ onSelectAgent }: TeamOverviewContainerPr
   const setSoul = useAppStore((s) => s.setSoul);
   const { stats, relationships, isLoading } = useTeamStats();
 
+  // Stable reference: only changes when agent IDs actually change
+  const agentIds = useMemo(() => Object.keys(agents), [agents]);
+
   // Load souls for all agents to display role info
-  const agentValues = Object.values(agents);
   useEffect(() => {
-    for (const agent of agentValues) {
-      if (!souls[agent.profile.id]) {
-        window.jam.team.soul.get(agent.profile.id).then((result) => {
-          if (result) setSoul(agent.profile.id, result as unknown as SoulEntry);
+    for (const id of agentIds) {
+      if (!souls[id]) {
+        window.jam.team.soul.get(id).then((result) => {
+          if (result) setSoul(id, result as unknown as SoulEntry);
         });
       }
     }
-  }, [agentValues, souls, setSoul]);
+  }, [agentIds, setSoul]); // removed souls — early guard prevents re-fetching already-loaded
 
   if (isLoading) {
     return (
@@ -35,7 +37,7 @@ export function TeamOverviewContainer({ onSelectAgent }: TeamOverviewContainerPr
     );
   }
 
-  const agentList = agentValues.map((a) => ({
+  const agentList = Object.values(agents).map((a) => ({
     id: a.profile.id,
     name: a.profile.name,
     color: a.profile.color,

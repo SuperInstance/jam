@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Streamdown } from 'streamdown';
 import { code } from '@streamdown/code';
 import type { ChatMessage } from '@/store/chatSlice';
+import { formatTime } from '@/utils/format';
 
 interface ChatMessageProps {
   message: ChatMessage;
@@ -13,11 +14,6 @@ interface ChatMessageProps {
 }
 
 const plugins = { code };
-
-function formatTime(ts: number): string {
-  const d = new Date(ts);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
 
 const DeleteButton: React.FC<{ onClick: () => void }> = ({ onClick }) => (
   <button
@@ -31,7 +27,7 @@ const DeleteButton: React.FC<{ onClick: () => void }> = ({ onClick }) => (
   </button>
 );
 
-export const ChatMessageView: React.FC<ChatMessageProps> = ({ message, onViewOutput, isThreadOpen, onDelete }) => {
+export const ChatMessageView: React.FC<ChatMessageProps> = React.memo(({ message, onViewOutput, isThreadOpen, onDelete }) => {
   const [expanded, setExpanded] = useState(false);
   const handleDelete = onDelete ? () => onDelete(message.id) : undefined;
 
@@ -206,4 +202,4 @@ export const ChatMessageView: React.FC<ChatMessageProps> = ({ message, onViewOut
       </div>
     </div>
   );
-};
+});

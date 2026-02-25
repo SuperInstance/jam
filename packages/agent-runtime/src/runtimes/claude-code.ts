@@ -11,7 +11,7 @@ import type {
 import { stripAnsiSimple } from '../utils.js';
 import { BaseAgentRuntime } from './base-runtime.js';
 import { JsonlOutputStrategy } from './output-strategy.js';
-import { parseJsonlStreamEvent, emitJsonlTerminalLine, parseJsonlResult } from './jsonl-parser.js';
+import { parseJsonlStreamEvent, emitJsonlTerminalLine, parseJsonlResult, hasResultEvent } from './jsonl-parser.js';
 
 export class ClaudeCodeRuntime extends BaseAgentRuntime {
   readonly runtimeId = 'claude-code';
@@ -127,11 +127,11 @@ export class ClaudeCodeRuntime extends BaseAgentRuntime {
 
   protected parseExecutionOutput(stdout: string, stderr: string, code: number): ExecutionResult {
     if (code !== 0) {
-      // Check if the JSONL stream has a valid result despite non-zero exit.
+      // Check if the JSONL stream has an explicit `result` event despite non-zero exit.
       // Claude Code can exit 1 even after producing valid output (e.g., hook failures,
       // non-critical post-execution errors). The `result` event is authoritative.
       const parsed = parseJsonlResult(stdout);
-      if (parsed.text && parsed.text.length > 0) {
+      if (parsed.sessionId || hasResultEvent(stdout)) {
         return parsed; // Agent produced output — treat as success
       }
 

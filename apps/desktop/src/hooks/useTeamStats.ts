@@ -8,12 +8,14 @@ export function useTeamStats() {
   const setStats = useAppStore((s) => s.setStats);
   const setRelationships = useAppStore((s) => s.setRelationships);
   const addRelationship = useAppStore((s) => s.addRelationship);
-  const agents = useAppStore((s) => s.agents);
+  // Only re-run when agent IDs change, not when any agent property changes
+  const agentIds = useAppStore(
+    (s) => Object.keys(s.agents),
+    (a, b) => a.length === b.length && a.every((id, i) => id === b[i]),
+  );
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Fetch stats for all agents
-    const agentIds = Object.keys(agents);
     const fetchAll = async () => {
       const allRels: RelationshipEntry[] = [];
 
@@ -46,7 +48,7 @@ export function useTeamStats() {
       cleanupStats();
       cleanupTrust();
     };
-  }, [agents, setStats, setRelationships, addRelationship]);
+  }, [agentIds, setStats, setRelationships, addRelationship]);
 
   return {
     stats,

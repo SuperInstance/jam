@@ -11,7 +11,7 @@ const SILENCE_DEBOUNCE_COUNT = 6; // Require 6 consecutive silent checks (300ms)
 export function useVoice() {
   const voiceState = useAppStore((s) => s.voiceState);
   const transcript = useAppStore((s) => s.currentTranscript);
-  const voiceMode = useAppStore((s) => s.settings.voiceMode);
+  const voiceMode = useAppStore((s) => s.voiceMode);
   const setVoiceState = useAppStore((s) => s.setVoiceState);
   const setVoiceMode = useAppStore((s) => s.setVoiceMode);
 

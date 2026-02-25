@@ -126,6 +126,18 @@ export function emitJsonlTerminalLine(
   }
 }
 
+/** Check if JSONL stdout contains an explicit `result` event.
+ *  Used to distinguish genuine agent output from raw text fallback. */
+export function hasResultEvent(stdout: string): boolean {
+  for (const line of stdout.trim().split('\n')) {
+    try {
+      const obj = JSON.parse(line);
+      if (obj.type === 'result') return true;
+    } catch { /* skip */ }
+  }
+  return false;
+}
+
 /** Extract the result from JSONL stdout (search backward for 'result' event).
  *  Also aggregates token usage from all events that report it. */
 export function parseJsonlResult(stdout: string): ExecutionResult {

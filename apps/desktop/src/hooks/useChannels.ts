@@ -41,7 +41,8 @@ export function useChannels() {
           (result as ChannelMessageEntry[]).reverse(),
         );
       });
-  }, [activeChannelId, channelMessages, prependChannelMessages]);
+  // channelMessages excluded: early return on line 34 guards against refetch
+  }, [activeChannelId, prependChannelMessages]);
 
   const sendMessage = useCallback(
     async (content: string, senderId: string) => {
@@ -57,7 +58,8 @@ export function useChannels() {
 
   const loadMore = useCallback(async () => {
     if (!activeChannelId) return;
-    const existing = channelMessages[activeChannelId] ?? [];
+    // Read from store directly to avoid dependency on the full channelMessages object
+    const existing = useAppStore.getState().channelMessages[activeChannelId] ?? [];
     const oldest = existing[0];
     if (!oldest) return;
 
@@ -70,7 +72,7 @@ export function useChannels() {
       activeChannelId,
       (older as unknown as ChannelMessageEntry[]).reverse(),
     );
-  }, [activeChannelId, channelMessages, prependChannelMessages]);
+  }, [activeChannelId, prependChannelMessages]);
 
   const activeChannel = channels.find((c) => c.id === activeChannelId) ?? null;
   const activeMessages = activeChannelId

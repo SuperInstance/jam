@@ -32,6 +32,9 @@ export class AgentContextBuilder {
   /** Shared skills directory — loaded for all agents (agent-specific overrides shared) */
   private sharedSkillsDir: string | null = null;
 
+  /** Cache for parsed skills — keyed by directory path, invalidated by mtime */
+  private skillsCache: Map<string, { skills: SkillDefinition[]; mtime: number }> = new Map();
+
   setSharedSkillsDir(dir: string): void {
     this.sharedSkillsDir = dir;
   }
@@ -94,6 +97,8 @@ export class AgentContextBuilder {
       const files = await readdir(dir);
       const jsonlFiles = files.filter(f => f.endsWith('.jsonl')).sort().reverse();
 
+      // Read only enough files to satisfy the request (3x limit buffer)
+      const readTarget = options.limit * 3;
       const allEntries: ConversationEntry[] = [];
       for (const file of jsonlFiles) {
         const content = await readFile(join(dir, file), 'utf-8');
@@ -101,6 +106,7 @@ export class AgentContextBuilder {
         for (const line of lines) {
           try { allEntries.push(JSON.parse(line)); } catch { /* skip */ }
         }
+        if (allEntries.length >= readTarget) break;
       }
 
       // Sort chronologically, with user before agent as tiebreaker for identical timestamps
@@ -180,6 +186,16 @@ export class AgentContextBuilder {
 
   private async loadSkillsFromDir(dir: string): Promise<SkillDefinition[]> {
     try {
+      const { stat } = await import('node:fs/promises');
+      const dirStat = await stat(dir).catch(() => null);
+      if (!dirStat) return [];
+
+      // Return cached skills if directory hasn't been modified
+      const cached = this.skillsCache.get(dir);
+      if (cached && dirStat.mtimeMs === cached.mtime) {
+        return cached.skills;
+      }
+
       const files = await readdir(dir);
       const mdFiles = files.filter(f => f.endsWith('.md'));
 
@@ -191,6 +207,8 @@ export class AgentContextBuilder {
           if (skill) skills.push(skill);
         } catch { /* skip unreadable */ }
       }
+
+      this.skillsCache.set(dir, { skills, mtime: dirStat.mtimeMs });
       return skills;
     } catch {
       return [];

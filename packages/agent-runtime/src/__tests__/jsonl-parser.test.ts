@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { parseJsonlStreamEvent, emitJsonlTerminalLine, parseJsonlResult } from '../runtimes/jsonl-parser.js';
+import { parseJsonlStreamEvent, emitJsonlTerminalLine, parseJsonlResult, hasResultEvent } from '../runtimes/jsonl-parser.js';
 
 describe('parseJsonlStreamEvent', () => {
   it('emits tool-use for tool_use type', () => {
@@ -260,5 +260,44 @@ describe('parseJsonlResult', () => {
     const stdout = JSON.stringify({ type: 'result' });
     const result = parseJsonlResult(stdout);
     expect(result.text).toBe('');
+  });
+});
+
+describe('hasResultEvent', () => {
+  it('returns true when stdout contains a result event line', () => {
+    const stdout = JSON.stringify({ type: 'result', result: 'Done!' });
+    expect(hasResultEvent(stdout)).toBe(true);
+  });
+
+  it('returns true when result event is among other JSONL events', () => {
+    const stdout = [
+      JSON.stringify({ type: 'message_start' }),
+      JSON.stringify({ type: 'thinking' }),
+      JSON.stringify({ type: 'content_block_delta', delta: { text: 'hello' } }),
+      JSON.stringify({ type: 'result', result: 'Final answer', session_id: 'sess-1' }),
+    ].join('\n');
+    expect(hasResultEvent(stdout)).toBe(true);
+  });
+
+  it('returns false for empty string', () => {
+    expect(hasResultEvent('')).toBe(false);
+  });
+
+  it('returns false for non-JSON text', () => {
+    expect(hasResultEvent('just some plain text output')).toBe(false);
+  });
+
+  it('returns false for JSON without type=result', () => {
+    const stdout = JSON.stringify({ text: 'hello', session_id: 'sid' });
+    expect(hasResultEvent(stdout)).toBe(false);
+  });
+
+  it('returns false for JSON with a different type', () => {
+    const stdout = [
+      JSON.stringify({ type: 'message_start' }),
+      JSON.stringify({ type: 'thinking' }),
+      JSON.stringify({ type: 'content_block_delta', delta: { text: 'hello' } }),
+    ].join('\n');
+    expect(hasResultEvent(stdout)).toBe(false);
   });
 });
