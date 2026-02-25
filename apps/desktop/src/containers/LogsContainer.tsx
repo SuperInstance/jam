@@ -95,8 +95,17 @@ export const LogsContainer: React.FC = () => {
     };
   }, []);
 
-  // Auto-scroll to bottom — only if already near bottom
+  // Scroll to bottom on initial load
+  const initialScrollDone = useRef(false);
   useEffect(() => {
+    if (initialScrollDone.current || !scrollRef.current || logsRef.current.length === 0) return;
+    initialScrollDone.current = true;
+    bottomRef.current?.scrollIntoView({ behavior: 'instant' });
+  }, [version]);
+
+  // Auto-scroll to bottom on new logs — only if already near bottom
+  useEffect(() => {
+    if (!initialScrollDone.current) return;
     const el = scrollRef.current;
     if (!el) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
