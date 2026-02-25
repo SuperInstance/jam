@@ -8,7 +8,7 @@ const log = createLogger('ServiceRegistry');
 
 const SERVICES_FILE = '.services.json';
 
-/** Grace period (ms) after restart during which we trust the cache alive status */
+/** Grace period (ms) after restart during which we trust the service is alive */
 const RESTART_GRACE_MS = 10_000;
 /** How often the health monitor checks services (ms) */
 const HEALTH_CHECK_INTERVAL_MS = 8_000;
@@ -17,8 +17,8 @@ const FAILURE_THRESHOLD = 3;
 
 export interface TrackedService {
   agentId: string;
-  pid: number;
-  port?: number;
+  /** Port the service listens on — primary identifier */
+  port: number;
   name: string;
   logFile?: string;
   startedAt: string;
@@ -76,19 +76,13 @@ export class ServiceRegistry {
         for (const line of lines) {
           try {
             const raw = JSON.parse(line);
-            if (!raw.pid || !raw.name) continue;
-            const port = raw.port ?? undefined;
+            // Port is required — services without a port can't be tracked
+            if (!raw.port || !raw.name) continue;
 
-            // Port is the primary indicator when available (PIDs can be stale
-            // if the process was restarted externally with a different PID).
-            let alive: boolean;
-            if (port) {
-              alive = await isPortAlive(port);
-            } else {
-              alive = isProcessAlive(raw.pid);
-            }
+            // Check if port is responding (primary alive indicator)
+            let alive = await isPortAlive(raw.port);
 
-            // During the grace period after restart, trust the process is alive
+            // During the grace period after restart, trust the service is alive
             const restartedAt = this.recentRestarts.get(raw.name);
             if (!alive && restartedAt && Date.now() - restartedAt < RESTART_GRACE_MS) {
               alive = true;
@@ -96,8 +90,7 @@ export class ServiceRegistry {
 
             allEntries.push({
               agentId,
-              pid: raw.pid,
-              port,
+              port: raw.port,
               name: raw.name,
               logFile: raw.logFile ?? undefined,
               startedAt: raw.startedAt ?? new Date().toISOString(),
@@ -122,13 +115,11 @@ export class ServiceRegistry {
 
     for (const entry of allEntries) {
       // If this port was already claimed by a newer-named service, evict the old name
-      if (entry.port) {
-        const prev = byPort.get(entry.port);
-        if (prev && prev.name !== entry.name) {
-          byName.delete(prev.name);
-        }
-        byPort.set(entry.port, entry);
+      const prev = byPort.get(entry.port);
+      if (prev && prev.name !== entry.name) {
+        byName.delete(prev.name);
       }
+      byPort.set(entry.port, entry);
       byName.set(entry.name, entry);
     }
     const deduped = Array.from(byName.values());
@@ -164,12 +155,12 @@ export class ServiceRegistry {
   async stopService(port: number): Promise<boolean> {
     const pid = await findPidByPort(port);
     if (!pid) {
-      log.warn(`No process found on port ${port}`);
+      log.warn(`No process found listening on port ${port}`);
       return false;
     }
     try {
       process.kill(pid, 'SIGTERM');
-      log.info(`Stopped process PID ${pid} on port ${port}`);
+      log.info(`Stopped service on port ${port} (PID ${pid})`);
       // Mark as dead in cache (keep the entry for restart)
       for (const [, services] of this.services) {
         for (const svc of services) {
@@ -187,7 +178,7 @@ export class ServiceRegistry {
   }
 
   /** Restart a stopped service by name. Requires `command` + `cwd` in the entry. */
-  restartService(serviceName: string): { success: boolean; pid?: number; error?: string } {
+  restartService(serviceName: string): { success: boolean; error?: string } {
     // Find the service entry
     let entry: TrackedService | undefined;
     for (const services of this.services.values()) {
@@ -211,11 +202,9 @@ export class ServiceRegistry {
       });
       child.unref();
 
-      const newPid = child.pid!;
-      log.info(`Restarted service "${entry.name}" (PID ${newPid}) in ${cwd}`);
+      log.info(`Restarted service "${entry.name}" on port ${entry.port} in ${cwd}`);
 
       // Update the cache entry in-place
-      entry.pid = newPid;
       entry.alive = true;
       entry.startedAt = new Date().toISOString();
 
@@ -224,10 +213,9 @@ export class ServiceRegistry {
       // Reset failure counter
       this.failureCounts.delete(`${entry.agentId}:${entry.name}`);
 
-      // Append new entry to .services.json
+      // Append new entry to .services.json (port-based, no PID)
       const servicesFile = join(cwd, SERVICES_FILE);
       const line = JSON.stringify({
-        pid: newPid,
         port: entry.port,
         name: entry.name,
         command: entry.command,
@@ -237,7 +225,7 @@ export class ServiceRegistry {
       });
       writeFile(servicesFile, line + '\n', { flag: 'a' }).catch(() => {});
 
-      return { success: true, pid: newPid };
+      return { success: true };
     } catch (err) {
       return { success: false, error: String(err) };
     }
@@ -279,18 +267,13 @@ export class ServiceRegistry {
           continue;
         }
 
-        // Port is the primary indicator when available (PIDs can be stale)
-        let healthy: boolean;
-        if (svc.port) {
-          healthy = await isPortAlive(svc.port);
-        } else {
-          healthy = isProcessAlive(svc.pid);
-        }
+        // Port-based health check — the only indicator we use
+        const healthy = await isPortAlive(svc.port);
 
         if (healthy) {
           // Service is up — reset failure count and mark alive
           if (!svc.alive) {
-            log.info(`Service "${svc.name}" (PID ${svc.pid}) is now alive`);
+            log.info(`Service "${svc.name}" (port ${svc.port}) is now alive`);
           }
           svc.alive = true;
           this.failureCounts.delete(key);
@@ -300,7 +283,7 @@ export class ServiceRegistry {
           this.failureCounts.set(key, failures);
 
           if (failures >= FAILURE_THRESHOLD && svc.alive !== false) {
-            log.warn(`Service "${svc.name}" (PID ${svc.pid}) marked dead after ${failures} consecutive failures`);
+            log.warn(`Service "${svc.name}" (port ${svc.port}) marked dead after ${failures} consecutive failures`);
             svc.alive = false;
           }
         }
@@ -309,39 +292,34 @@ export class ServiceRegistry {
   }
 
   /** Stop all tracked services for a specific agent */
-  stopForAgent(agentId: string): void {
+  async stopForAgent(agentId: string): Promise<void> {
     const services = this.services.get(agentId) ?? [];
-    for (const svc of services) {
-      try {
-        process.kill(svc.pid, 'SIGTERM');
-        log.info(`Stopped service "${svc.name}" (PID ${svc.pid}) for agent ${agentId}`);
-      } catch { /* already dead */ }
-    }
+    await Promise.all(services.map(svc => this.killServiceByPort(svc.port, svc.name)));
     this.services.delete(agentId);
   }
 
   /** Stop ALL tracked services across all agents */
-  stopAll(): void {
+  async stopAll(): Promise<void> {
     this.stopHealthMonitor();
-    for (const [aid, services] of this.services) {
+    const kills: Promise<void>[] = [];
+    for (const [, services] of this.services) {
       for (const svc of services) {
-        try {
-          process.kill(svc.pid, 'SIGTERM');
-          log.info(`Stopped service "${svc.name}" (PID ${svc.pid}) for agent ${aid}`);
-        } catch { /* already dead */ }
+        kills.push(this.killServiceByPort(svc.port, svc.name));
       }
     }
+    await Promise.all(kills);
     this.services.clear();
   }
-}
 
-/** Check if a process is alive via PID signal check */
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
+  /** Safely kill a service by finding the PID listening on its port */
+  private async killServiceByPort(port: number, name: string): Promise<void> {
+    const pid = await findPidByPort(port);
+    if (!pid) return;
+
+    try {
+      process.kill(pid, 'SIGTERM');
+      log.info(`Stopped service "${name}" (PID ${pid}, port ${port})`);
+    } catch { /* already dead */ }
   }
 }
 
@@ -359,13 +337,18 @@ function isPortAlive(port: number, timeoutMs = 2000): Promise<boolean> {
   });
 }
 
-/** Find the PID listening on a given port using lsof */
+/** Find the PID listening on a given port using lsof.
+ *  Uses `-sTCP:LISTEN` to only match the server process (not clients).
+ *  Excludes our own PID to prevent self-kill. */
 function findPidByPort(port: number): Promise<number | null> {
   const { execSync } = require('node:child_process') as typeof import('node:child_process');
+  const ownPid = process.pid;
   try {
-    const output = execSync(`lsof -ti :${port}`, { encoding: 'utf-8', timeout: 3000 });
-    const pid = parseInt(output.trim().split('\n')[0], 10);
-    return Promise.resolve(Number.isFinite(pid) ? pid : null);
+    const output = execSync(`lsof -ti :${port} -sTCP:LISTEN`, { encoding: 'utf-8', timeout: 3000 });
+    const pids = output.trim().split('\n')
+      .map(l => parseInt(l.trim(), 10))
+      .filter(p => Number.isFinite(p) && p !== ownPid);
+    return Promise.resolve(pids.length > 0 ? pids[0] : null);
   } catch {
     return Promise.resolve(null);
   }

@@ -10,12 +10,13 @@ interface AgentDetailContainerProps {
 }
 
 interface ServiceEntry {
-  pid: number;
-  port?: number;
+  port: number;
   name: string;
   logFile?: string;
   startedAt: string;
   alive?: boolean;
+  command?: string;
+  cwd?: string;
 }
 
 export function AgentDetailContainer({ agentId }: AgentDetailContainerProps) {

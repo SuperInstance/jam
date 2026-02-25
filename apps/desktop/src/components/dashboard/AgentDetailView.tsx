@@ -2,8 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { SoulView } from '@/components/dashboard/SoulView';
 
 interface ServiceEntry {
-  pid: number;
-  port?: number;
+  port: number;
   name: string;
   logFile?: string;
   startedAt: string;
@@ -264,7 +263,7 @@ export function AgentDetailView({
               const canRestart = !isAlive && !!svc.command;
               return (
                 <div
-                  key={`${svc.name}-${svc.pid}`}
+                  key={`${svc.name}-${svc.port}`}
                   className={`bg-zinc-800 rounded-lg p-3 border ${
                     isAlive ? 'border-zinc-700' : 'border-zinc-700/50'
                   }`}
@@ -332,7 +331,7 @@ export function AgentDetailView({
                     </div>
                   </div>
                   <div className="flex items-center gap-3 mt-1.5 text-xs text-zinc-500">
-                    <span>PID {svc.pid}</span>
+                    <span>:{svc.port}</span>
                     {svc.logFile && <span>{svc.logFile}</span>}
                     <span>{new Date(svc.startedAt).toLocaleString()}</span>
                   </div>

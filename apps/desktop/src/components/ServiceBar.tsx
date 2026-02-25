@@ -3,8 +3,7 @@ import { useAppStore } from '@/store';
 
 interface ServiceEntry {
   agentId: string;
-  pid: number;
-  port?: number;
+  port: number;
   name: string;
   logFile?: string;
   startedAt: string;

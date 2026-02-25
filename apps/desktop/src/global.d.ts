@@ -203,8 +203,7 @@ export interface JamAPI {
   services: {
     list: () => Promise<Array<{
       agentId: string;
-      pid: number;
-      port?: number;
+      port: number;
       name: string;
       logFile?: string;
       startedAt: string;
@@ -214,8 +213,7 @@ export interface JamAPI {
     }>>;
     listForAgent: (agentId: string) => Promise<Array<{
       agentId: string;
-      pid: number;
-      port?: number;
+      port: number;
       name: string;
       logFile?: string;
       startedAt: string;
@@ -224,7 +222,7 @@ export interface JamAPI {
       cwd?: string;
     }>>;
     stop: (port: number) => Promise<{ success: boolean }>;
-    restart: (serviceName: string) => Promise<{ success: boolean; pid?: number; error?: string }>;
+    restart: (serviceName: string) => Promise<{ success: boolean; error?: string }>;
     openUrl: (port: number) => Promise<{ success: boolean }>;
   };
 
