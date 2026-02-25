@@ -76,14 +76,16 @@ export class InboxWatcher {
           // `from` is the sender agent ID; falls back to inbox owner
           const sender = request.from || agentId;
 
+          // assignedTo defaults to inbox owner — always 'assigned' so TaskExecutor picks it up
+          const assignee = request.assignedTo || agentId;
           const task = await this.taskStore.create({
             title: request.title,
             description: request.description || '',
-            status: request.assignedTo ? 'assigned' : 'pending',
+            status: 'assigned',
             priority: (request.priority as 'low' | 'normal' | 'high' | 'critical') ?? 'normal',
             source: 'agent',
             createdBy: sender,
-            assignedTo: request.assignedTo || agentId,
+            assignedTo: assignee,
             createdAt: new Date().toISOString(),
             tags: request.tags ?? [],
           });
