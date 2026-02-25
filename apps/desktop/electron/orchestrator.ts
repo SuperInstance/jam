@@ -119,6 +119,15 @@ export class Orchestrator {
     this.sharedSkillsDir = join(homedir(), '.jam', 'shared-skills');
     const sharedSkillsDir = this.sharedSkillsDir;
 
+    // Create memory + team stores (needed before AgentManager)
+    const agentsDir = join(app.getPath('userData'), 'agents');
+    this.memoryStore = new FileMemoryStore(agentsDir);
+    const teamDir = join(app.getPath('userData'), 'team');
+    this.taskStore = new FileTaskStore(teamDir);
+    this.communicationHub = new FileCommunicationHub(teamDir, this.eventBus);
+    this.relationshipStore = new FileRelationshipStore(teamDir);
+    this.statsStore = new FileStatsStore(teamDir);
+
     // Create agent manager with injected dependencies
     const contextBuilder = new AgentContextBuilder();
     const taskTracker = new TaskTracker();
@@ -133,21 +142,11 @@ export class Orchestrator {
       (bindings) => this.appStore.resolveSecretBindings(bindings),
       () => this.appStore.getAllSecretValues(),
       sharedSkillsDir,
+      this.statsStore,
     );
 
     // Bootstrap JAM system agent (creates if not already persisted)
     this.agentManager.ensureSystemAgent(JAM_SYSTEM_PROFILE);
-
-    // Create memory store
-    const agentsDir = join(app.getPath('userData'), 'agents');
-    this.memoryStore = new FileMemoryStore(agentsDir);
-
-    // Create team system services
-    const teamDir = join(app.getPath('userData'), 'team');
-    this.taskStore = new FileTaskStore(teamDir);
-    this.communicationHub = new FileCommunicationHub(teamDir, this.eventBus);
-    this.relationshipStore = new FileRelationshipStore(teamDir);
-    this.statsStore = new FileStatsStore(teamDir);
     this.soulManager = new SoulManager(agentsDir, this.eventBus);
     this.taskAssigner = new SmartTaskAssigner();
     this.scheduleStore = new FileScheduleStore(teamDir);

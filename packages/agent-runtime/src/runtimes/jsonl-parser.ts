@@ -1,4 +1,4 @@
-import type { ExecutionProgress, ExecutionResult } from '@jam/core';
+import type { ExecutionProgress, ExecutionResult, TokenUsage } from '@jam/core';
 import { stripAnsiSimple } from '../utils.js';
 
 /**
@@ -126,9 +126,11 @@ export function emitJsonlTerminalLine(
   }
 }
 
-/** Extract the result from JSONL stdout (search backward for 'result' event) */
+/** Extract the result from JSONL stdout (search backward for 'result' event).
+ *  Also aggregates token usage from all events that report it. */
 export function parseJsonlResult(stdout: string): ExecutionResult {
   const lines = stdout.trim().split('\n');
+  const usage = extractTokenUsage(lines);
 
   // Look for the result event (last one wins)
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -139,6 +141,7 @@ export function parseJsonlResult(stdout: string): ExecutionResult {
           success: true,
           text: obj.result ?? '',
           sessionId: obj.session_id,
+          usage,
         };
       }
     } catch { /* skip non-JSON lines */ }
@@ -151,9 +154,59 @@ export function parseJsonlResult(stdout: string): ExecutionResult {
       success: true,
       text: data.result ?? data.text ?? data.content ?? stdout,
       sessionId: data.session_id,
+      usage,
     };
   } catch {
     // Last resort: return raw stdout stripped of ANSI
-    return { success: true, text: stripAnsiSimple(stdout).trim() };
+    return { success: true, text: stripAnsiSimple(stdout).trim(), usage };
   }
+}
+
+/** Aggregate token usage from JSONL stream events.
+ *  Supports multiple event shapes:
+ *  - Claude Code: `result` event with `total_cost_usd`, or message events with `usage`
+ *  - Generic: any event with `usage.input_tokens` / `usage.output_tokens` */
+function extractTokenUsage(lines: string[]): TokenUsage | undefined {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let found = false;
+
+  for (const line of lines) {
+    try {
+      const obj = JSON.parse(line);
+
+      // Claude Code result event includes total usage
+      if (obj.type === 'result' && obj.total_input_tokens != null) {
+        return {
+          inputTokens: obj.total_input_tokens,
+          outputTokens: obj.total_output_tokens ?? 0,
+        };
+      }
+
+      // Claude Code result event — usage nested under result
+      if (obj.type === 'result' && obj.usage) {
+        return {
+          inputTokens: obj.usage.input_tokens ?? 0,
+          outputTokens: obj.usage.output_tokens ?? 0,
+        };
+      }
+
+      // Message-level usage (Anthropic API shape: message_start, message_stop)
+      if (obj.usage?.input_tokens != null || obj.usage?.output_tokens != null) {
+        inputTokens += obj.usage.input_tokens ?? 0;
+        outputTokens += obj.usage.output_tokens ?? 0;
+        found = true;
+        continue;
+      }
+
+      // Nested under message (e.g. message_start event)
+      if (obj.message?.usage?.input_tokens != null) {
+        inputTokens += obj.message.usage.input_tokens ?? 0;
+        outputTokens += obj.message.usage.output_tokens ?? 0;
+        found = true;
+      }
+    } catch { /* skip non-JSON */ }
+  }
+
+  return found ? { inputTokens, outputTokens } : undefined;
 }

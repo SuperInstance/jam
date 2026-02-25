@@ -10,6 +10,7 @@ import type {
   SecretBinding,
   IEventBus,
   ExecutionOptions,
+  IStatsStore,
 } from '@jam/core';
 import { createLogger } from '@jam/core';
 import { PtyManager } from './pty-manager.js';
@@ -93,6 +94,7 @@ export class AgentManager {
     private secretResolver?: SecretResolver,
     private secretValuesProvider?: SecretValuesProvider,
     sharedSkillsDir?: string,
+    private statsStore?: IStatsStore,
   ) {
     if (sharedSkillsDir) {
       this.contextBuilder.setSharedSkillsDir(sharedSkillsDir);
@@ -413,6 +415,7 @@ export class AgentManager {
     }
 
     this.abortControllers.delete(agentId);
+    this.recordTokenUsage(agentId, result);
 
     if (!result.success) {
       this.taskTracker.completeTask(agentId, 'failed');
@@ -518,6 +521,7 @@ export class AgentManager {
 
       result.text = sanitizeResultText(result.text);
       result.text = this.redact(result.text);
+      this.recordTokenUsage(agentId, result);
 
       // Store session ID for conversation continuity
       if (result.sessionId) {
@@ -544,6 +548,12 @@ export class AgentManager {
     } finally {
       this.abortControllers.delete(detachedKey);
     }
+  }
+
+  /** Persist token usage to stats store (fire-and-forget) */
+  private recordTokenUsage(agentId: AgentId, result: { usage?: { inputTokens: number; outputTokens: number } }): void {
+    if (!this.statsStore || !result.usage) return;
+    this.statsStore.incrementTokens(agentId, result.usage.inputTokens, result.usage.outputTokens).catch(() => {});
   }
 
   /** Get the current task status for an agent (from in-memory tracker) */

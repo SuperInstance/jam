@@ -130,7 +130,9 @@ export class ClaudeCodeRuntime extends BaseAgentRuntime {
       const stdoutErr = this.extractErrorFromOutput(stdout);
       const stderrErr = stderr.trim();
       const errMsg = (stdoutErr || stderrErr || `Exit code ${code}`).slice(0, 500);
-      return { success: false, text: '', error: errMsg };
+      // Still extract usage from failed runs — tokens were consumed
+      const partial = parseJsonlResult(stdout);
+      return { success: false, text: '', error: errMsg, usage: partial.usage };
     }
 
     return parseJsonlResult(stdout);

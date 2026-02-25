@@ -95,7 +95,8 @@ export class CursorRuntime extends BaseAgentRuntime {
     if (code !== 0) {
       const lastLine = stripAnsiSimple(stdout).trim().split('\n').pop()?.trim();
       const errMsg = (stderr.trim() || lastLine || `Exit code ${code}`).slice(0, 500);
-      return { success: false, text: '', error: errMsg };
+      const partial = parseJsonlResult(stdout);
+      return { success: false, text: '', error: errMsg, usage: partial.usage };
     }
 
     return parseJsonlResult(stdout);

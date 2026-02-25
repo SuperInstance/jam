@@ -17,12 +17,20 @@ export interface InputContext {
   sharedContext?: string;
 }
 
+/** Token usage from a single execution */
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
 /** Result from executing a one-shot command (voice, API, etc.) */
 export interface ExecutionResult {
   success: boolean;
   text: string;
   sessionId?: string;
   error?: string;
+  /** Token usage reported by the runtime (if available) */
+  usage?: TokenUsage;
 }
 
 /** Progress event emitted during long-running execution */
