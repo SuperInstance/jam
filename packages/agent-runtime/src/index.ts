@@ -13,8 +13,12 @@ export { ServiceRegistry } from './service-registry.js';
 export type { OutputStrategy } from './runtimes/output-strategy.js';
 export { JsonlOutputStrategy, ThrottledOutputStrategy } from './runtimes/output-strategy.js';
 
-export type { PtyInstance, PtyOutputHandler, PtyExitHandler } from './pty-manager.js';
+export type { IPtyManager, PtyInstance, PtySpawnOptions, PtySpawnResult, PtyOutputHandler, PtyExitHandler } from './pty-manager.js';
+export { shellEscape } from './pty-manager.js';
 export type { AgentStore, SecretResolver, SecretValuesProvider } from './agent-manager.js';
 export type { ConversationEntry, SkillDefinition } from './agent-context-builder.js';
 export type { TaskInfo, TaskStep } from './task-tracker.js';
-export type { TrackedService } from './service-registry.js';
+export type { TrackedService, PortResolver } from './service-registry.js';
+export { buildCleanEnv } from './utils.js';
+export { PtyDataHandler } from './pty-utils.js';
+export type { WritablePty } from './pty-utils.js';

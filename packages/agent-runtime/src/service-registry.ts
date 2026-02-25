@@ -30,6 +30,10 @@ export interface TrackedService {
   cwd?: string;
 }
 
+/** Resolves container ports to host ports (for Docker sandbox mode).
+ *  Default: returns the port as-is (native mode). */
+export type PortResolver = (agentId: string, containerPort: number) => number;
+
 export class ServiceRegistry {
   /** Cached services by agentId */
   private services = new Map<string, TrackedService[]>();
@@ -39,6 +43,13 @@ export class ServiceRegistry {
   private failureCounts = new Map<string, number>();
   /** Health monitor interval handle */
   private healthInterval: ReturnType<typeof setInterval> | null = null;
+  /** Port resolver for sandbox mode (maps container port → host port) */
+  private portResolver: PortResolver = (_agentId, port) => port;
+
+  /** Set a custom port resolver (for Docker sandbox mode) */
+  setPortResolver(resolver: PortResolver): void {
+    this.portResolver = resolver;
+  }
 
   /** Scan an agent's workspace for `.services.json` and update cache.
    *  Checks both the root cwd and immediate subdirectories (agents may
@@ -81,7 +92,9 @@ export class ServiceRegistry {
             if (!raw.port || !raw.name) continue;
 
             // Check if port is responding (primary alive indicator)
-            let alive = await isPortAlive(raw.port);
+            // In sandbox mode, resolve container port → host port for the check
+            const checkPort = this.portResolver(agentId, raw.port);
+            let alive = await isPortAlive(checkPort);
 
             // During the grace period after restart, trust the service is alive
             const restartedAt = this.recentRestarts.get(raw.name);
@@ -271,8 +284,9 @@ export class ServiceRegistry {
           continue;
         }
 
-        // Port-based health check — the only indicator we use
-        const healthy = await isPortAlive(svc.port);
+        // Port-based health check — resolve to host port in sandbox mode
+        const checkPort = this.portResolver(svc.agentId, svc.port);
+        const healthy = await isPortAlive(checkPort);
 
         if (healthy) {
           // Service is up — reset failure count and mark alive

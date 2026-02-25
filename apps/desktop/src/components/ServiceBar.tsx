@@ -14,7 +14,7 @@ interface ServiceEntry {
 
 export const ServicePanel: React.FC = () => {
   const [services, setServices] = useState<ServiceEntry[]>([]);
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const [search, setSearch] = useState('');
   const agents = useAppStore((s) => s.agents);
 

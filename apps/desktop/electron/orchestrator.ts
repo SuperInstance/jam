@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, shell, clipboard, Notification } from 'electron';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { readFile, readdir, stat, mkdir, writeFile } from 'node:fs/promises';
@@ -16,6 +16,18 @@ import {
   CursorRuntime,
   ServiceRegistry,
 } from '@jam/agent-runtime';
+import type { IPtyManager } from '@jam/agent-runtime';
+import type { IContainerManager } from '@jam/core';
+import { randomBytes } from 'node:crypto';
+import {
+  DockerClient,
+  ContainerManager,
+  PortAllocator,
+  SandboxedPtyManager,
+  ImageManager,
+  HostBridge,
+  AGENT_DOCKERFILE,
+} from '@jam/sandbox';
 import {
   VoiceService,
   CommandParser,
@@ -69,10 +81,13 @@ function pickDeathPhrase(name: string): string {
 
 export class Orchestrator {
   readonly eventBus: EventBus;
-  readonly ptyManager: PtyManager;
+  readonly ptyManager: IPtyManager;
   readonly runtimeRegistry: RuntimeRegistry;
   readonly agentManager: AgentManager;
   readonly serviceRegistry: ServiceRegistry;
+  readonly containerManager: IContainerManager | null = null;
+  private readonly portAllocator: PortAllocator | null = null;
+  private readonly hostBridge: HostBridge | null = null;
   readonly memoryStore: FileMemoryStore;
   readonly appStore: AppStore;
   readonly config: JamConfig;
@@ -96,6 +111,8 @@ export class Orchestrator {
   readonly improvementStore: FileImprovementStore;
   readonly codeImprovement: CodeImprovementEngine | null = null;
   private readonly sharedSkillsDir: string;
+  private readonly imageReady: Promise<void> = Promise.resolve();
+  private readonly reclaimedAgentIds: Set<string> = new Set();
   readonly taskExecutor: TaskExecutor;
 
   private mainWindow: BrowserWindow | null = null;
@@ -103,11 +120,76 @@ export class Orchestrator {
   constructor() {
     this.config = loadConfig();
     this.eventBus = new EventBus();
-    this.ptyManager = new PtyManager();
     this.runtimeRegistry = new RuntimeRegistry();
     this.appStore = new AppStore();
     this.commandParser = new CommandParser();
     this.serviceRegistry = new ServiceRegistry();
+
+    // Initialize PTY manager — sandbox mode or native
+    if (this.config.sandbox.enabled) {
+      const docker = new DockerClient();
+      if (docker.isAvailable()) {
+        log.info('Docker available — enabling sandbox mode');
+        this.portAllocator = new PortAllocator(
+          this.config.sandbox.portRangeStart,
+          this.config.sandbox.portsPerAgent,
+        );
+        this.containerManager = new ContainerManager(docker, this.portAllocator, this.config.sandbox);
+        this.ptyManager = new SandboxedPtyManager(this.containerManager, docker);
+
+        // Reclaim running containers from a previous session (e.g. hot reload)
+        // Stopped/crashed containers are cleaned up; running ones are reused
+        this.reclaimedAgentIds = this.containerManager.reclaimExisting();
+
+        // Ensure agent image exists — awaited by startAutoStartAgents() before launching containers
+        const imageManager = new ImageManager(docker, AGENT_DOCKERFILE);
+        // Use content-hash versioned tag so Dockerfile changes trigger automatic rebuild
+        this.config.sandbox.imageName = imageManager.resolveTag(this.config.sandbox.imageName);
+        this.imageReady = imageManager.ensureImage(this.config.sandbox.imageName, (line) => {
+          // Forward Docker build output as progress to the renderer
+          this.sendToRenderer('sandbox:progress', {
+            status: 'building-image',
+            message: line,
+          });
+        }).then(() => {
+          this.sendToRenderer('sandbox:progress', {
+            status: 'starting-containers',
+            message: 'Docker image ready — starting agent containers...',
+          });
+        }).catch((err) => {
+          log.error(`Failed to build sandbox image: ${String(err)}`);
+          this.sendToRenderer('sandbox:progress', {
+            status: 'error',
+            message: `Failed to build sandbox image: ${String(err)}`,
+          });
+        });
+
+        // Start host bridge — HTTP API for containerized agents to execute host operations
+        this.hostBridge = new HostBridge(this.config.sandbox.hostBridgePort, {
+          openExternal: (url) => shell.openExternal(url),
+          readClipboard: () => clipboard.readText(),
+          writeClipboard: (text) => clipboard.writeText(text),
+          openPath: (path) => shell.openPath(path),
+          showNotification: (title, body) => new Notification({ title, body }).show(),
+        });
+        const bridgeToken = randomBytes(32).toString('hex');
+        this.hostBridge.start(bridgeToken).then(({ port }) => {
+          log.info(`Host bridge listening on port ${port}`);
+          this.agentManager.setExtraEnv({
+            JAM_HOST_BRIDGE_URL: `http://host.docker.internal:${port}/bridge`,
+            JAM_HOST_BRIDGE_TOKEN: bridgeToken,
+          });
+        }).catch((err) => {
+          log.error(`Failed to start host bridge: ${String(err)}`);
+        });
+      } else {
+        log.warn('Docker not available — falling back to native execution');
+        this.eventBus.emit('sandbox:unavailable', { reason: 'Docker Desktop is not running or not installed' });
+        this.ptyManager = new PtyManager();
+      }
+    } else {
+      this.ptyManager = new PtyManager();
+    }
 
     // Register runtimes
     this.runtimeRegistry.register(new ClaudeCodeRuntime());
@@ -144,6 +226,28 @@ export class Orchestrator {
       sharedSkillsDir,
       this.statsStore,
     );
+
+    // Register Docker sandbox hooks if sandbox mode is active
+    if (this.containerManager && this.portAllocator) {
+      const cm = this.containerManager;
+      const pa = this.portAllocator;
+
+      // Pre-start: create container before PTY spawn
+      this.agentManager.setPreStartHook(async (agentId, profile) => {
+        await cm.createAndStart({
+          agentId,
+          agentName: profile.name,
+          workspacePath: profile.cwd ?? join(homedir(), '.jam', 'agents', profile.name),
+          sharedSkillsPath: sharedSkillsDir,
+        });
+      });
+
+      // Port resolver: map container ports to host ports for health checks
+      // Injected directly from PortAllocator (no proxy through ContainerManager)
+      this.serviceRegistry.setPortResolver((agentId, containerPort) =>
+        pa.resolveHostPort(agentId, containerPort) ?? containerPort,
+      );
+    }
 
     // Bootstrap JAM system agent (creates if not already persisted)
     this.agentManager.ensureSystemAgent(JAM_SYSTEM_PROFILE);
@@ -302,6 +406,12 @@ export class Orchestrator {
     const teamSkillPath = join(dir, 'team-communication.md');
     const teamSkill = this.buildTeamCommunicationSkill();
     await writeFile(teamSkillPath, teamSkill, 'utf-8');
+
+    // Host bridge skill — only in sandbox mode (teaches agents how to call host operations)
+    if (this.config.sandbox.enabled && this.hostBridge) {
+      const bridgeSkillPath = join(dir, 'host-bridge.md');
+      await writeFile(bridgeSkillPath, HOST_BRIDGE_SKILL, 'utf-8');
+    }
   }
 
   /** Rebuild the team communication skill file when agents change */
@@ -372,6 +482,14 @@ export class Orchestrator {
 
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win;
+
+    // Send initial sandbox status so the renderer knows if it should show a loading screen
+    if (this.config.sandbox.enabled && this.containerManager) {
+      this.sendToRenderer('sandbox:progress', {
+        status: 'building-image',
+        message: 'Preparing sandbox environment...',
+      });
+    }
 
     // Forward events to renderer
     this.eventBus.on('agent:statusChanged', (data: {
@@ -720,12 +838,34 @@ export class Orchestrator {
   }
 
   async startAutoStartAgents(): Promise<void> {
+    // Wait for Docker image to be ready before launching any containers
+    await this.imageReady;
+
     const agents = this.agentManager.list();
-    for (const agent of agents) {
-      if (agent.profile.autoStart) {
-        log.info(`Auto-starting agent: ${agent.profile.name}`, undefined, agent.profile.id);
-        await this.agentManager.start(agent.profile.id);
-      }
+    const autoStartAgents = agents.filter((a) => a.profile.autoStart);
+
+    if (autoStartAgents.length > 0 && this.containerManager) {
+      this.sendToRenderer('sandbox:progress', {
+        status: 'starting-containers',
+        message: `Starting ${autoStartAgents.length} agent container(s)...`,
+      });
+    }
+
+    for (const agent of autoStartAgents) {
+      log.info(`Auto-starting agent: ${agent.profile.name}`, undefined, agent.profile.id);
+      this.sendToRenderer('sandbox:progress', {
+        status: 'starting-containers',
+        message: `Starting ${agent.profile.name}...`,
+      });
+      await this.agentManager.start(agent.profile.id);
+    }
+
+    // Signal sandbox is fully ready
+    if (this.containerManager) {
+      this.sendToRenderer('sandbox:progress', {
+        status: 'ready',
+        message: 'All agent containers running',
+      });
     }
 
     // Initial scan for background services agents may have left running
@@ -757,7 +897,14 @@ export class Orchestrator {
     }
   }
 
-  shutdown(): void {
+  /**
+   * Shut down all services and clean up resources.
+   *
+   * @param keepContainers - If true, Docker containers stay running for fast
+   *   reclaim on next startup (used during HMR hot reload). If false, containers
+   *   are stopped and removed (used on real app exit).
+   */
+  shutdown(keepContainers = false): void {
     this.taskExecutor.stop();
     this.teamEventHandler.stop();
     this.taskScheduler.stop();
@@ -772,6 +919,18 @@ export class Orchestrator {
     this.agentManager.stopAll();
     this.serviceRegistry.stopAll().catch(() => {});
     this.ptyManager.killAll();
+
+    // Stop host bridge
+    this.hostBridge?.stop().catch(() => {});
+
+    if (keepContainers) {
+      // HMR: keep containers running — they'll be reclaimed on next startup
+      log.info('Keeping Docker containers alive for hot reload reclaim');
+    } else {
+      // Real exit: stop and remove all Docker containers
+      this.containerManager?.stopAll();
+    }
+
     this.eventBus.removeAllListeners();
   }
 }
@@ -973,4 +1132,84 @@ const SECRETS_HANDLING_SKILL = [
   '- Always add `.env` to `.gitignore`',
   '- When a project needs an API key, use `process.env.VAR_NAME` and tell the user to configure the secret in Jam',
   '- If you see hardcoded secrets in existing code, flag it to the user immediately',
+].join('\n');
+
+const HOST_BRIDGE_SKILL = [
+  '---',
+  'name: host-bridge',
+  'description: How to interact with the host machine from inside a Docker container',
+  'triggers: browser, open, url, clipboard, paste, copy, applescript, osascript, notification, notify, host, desktop',
+  '---',
+  '',
+  '# Host Bridge — Interacting with the Host Machine',
+  '',
+  'When running in sandbox mode, you are inside a Docker container and cannot directly',
+  'access the host machine\'s browser, clipboard, or other desktop features.',
+  '',
+  'The Host Bridge provides a secure HTTP API on the host machine.',
+  '',
+  '## Configuration',
+  '',
+  'The bridge URL and token are available as environment variables:',
+  '- `JAM_HOST_BRIDGE_URL` — the bridge endpoint (only set when sandbox mode is active)',
+  '- `JAM_HOST_BRIDGE_TOKEN` — authentication token (rotates each session)',
+  '',
+  'If `JAM_HOST_BRIDGE_URL` is not set, you are running in native mode and can use',
+  'standard tools directly.',
+  '',
+  '## Operations',
+  '',
+  '### Open a URL in the host browser',
+  '```bash',
+  'curl -s -X POST "$JAM_HOST_BRIDGE_URL" \\',
+  '  -H "Authorization: Bearer $JAM_HOST_BRIDGE_TOKEN" \\',
+  '  -H "Content-Type: application/json" \\',
+  '  -d \'{"operation":"open-url","params":{"url":"https://example.com"}}\'',
+  '```',
+  '',
+  '### Read host clipboard',
+  '```bash',
+  'curl -s -X POST "$JAM_HOST_BRIDGE_URL" \\',
+  '  -H "Authorization: Bearer $JAM_HOST_BRIDGE_TOKEN" \\',
+  '  -H "Content-Type: application/json" \\',
+  '  -d \'{"operation":"clipboard-read","params":{}}\'',
+  '```',
+  '',
+  '### Write to host clipboard',
+  '```bash',
+  'curl -s -X POST "$JAM_HOST_BRIDGE_URL" \\',
+  '  -H "Authorization: Bearer $JAM_HOST_BRIDGE_TOKEN" \\',
+  '  -H "Content-Type: application/json" \\',
+  '  -d \'{"operation":"clipboard-write","params":{"text":"Hello from container"}}\'',
+  '```',
+  '',
+  '### Run AppleScript (macOS only)',
+  '```bash',
+  'curl -s -X POST "$JAM_HOST_BRIDGE_URL" \\',
+  '  -H "Authorization: Bearer $JAM_HOST_BRIDGE_TOKEN" \\',
+  '  -H "Content-Type: application/json" \\',
+  '  -d \'{"operation":"applescript","params":{"script":"tell application \\"Safari\\" to open location \\"https://example.com\\""}}\'',
+  '```',
+  '',
+  '### Show a desktop notification',
+  '```bash',
+  'curl -s -X POST "$JAM_HOST_BRIDGE_URL" \\',
+  '  -H "Authorization: Bearer $JAM_HOST_BRIDGE_TOKEN" \\',
+  '  -H "Content-Type: application/json" \\',
+  '  -d \'{"operation":"notification","params":{"title":"Build Complete","body":"All tests passed"}}\'',
+  '```',
+  '',
+  '### Open a file on the host',
+  '```bash',
+  'curl -s -X POST "$JAM_HOST_BRIDGE_URL" \\',
+  '  -H "Authorization: Bearer $JAM_HOST_BRIDGE_TOKEN" \\',
+  '  -H "Content-Type: application/json" \\',
+  '  -d \'{"operation":"file-open","params":{"path":"/path/to/file.pdf"}}\'',
+  '```',
+  '',
+  '## Rules',
+  '- Only use the bridge when `JAM_HOST_BRIDGE_URL` is set',
+  '- The bridge only allows whitelisted operations — arbitrary commands are not supported',
+  '- AppleScript: `do shell script` and keystroke simulation are blocked for security',
+  '- Always check the response `success` field before assuming the operation worked',
 ].join('\n');

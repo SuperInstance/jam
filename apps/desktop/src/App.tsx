@@ -17,6 +17,7 @@ import { LogsDrawer } from '@/components/LogsDrawer';
 import { useTTSQueue } from '@/hooks/useTTSQueue';
 import { useIPCSubscriptions } from '@/hooks/useIPCSubscriptions';
 import { NotificationPanel } from '@/components/NotificationPanel';
+import { SandboxLoadingOverlay } from '@/components/SandboxLoadingOverlay';
 
 export default function App() {
   const navExpanded = useAppStore((s) => s.navExpanded);
@@ -31,6 +32,8 @@ export default function App() {
   const unreadCount = useAppStore((s) => s.notifications.filter((n) => !n.read).length);
   const voiceState = useAppStore((s) => s.voiceState);
   const agents = useAppStore((s) => s.agents);
+  const sandboxStatus = useAppStore((s) => s.sandboxStatus);
+  const sandboxMessage = useAppStore((s) => s.sandboxMessage);
 
   const headerAgents = useMemo(() =>
     Object.values(agents)
@@ -66,9 +69,10 @@ export default function App() {
     window.jam.window.setCompact(viewMode === 'compact');
   }, [viewMode]);
 
-  // Show nothing until onboarding check completes
-  if (!onboardingChecked) {
-    return <div className="h-screen bg-zinc-950" />;
+  // Show loading overlay while sandbox is initializing (image build / container startup)
+  const sandboxLoading = sandboxStatus === 'building-image' || sandboxStatus === 'starting-containers';
+  if (!onboardingChecked || sandboxLoading) {
+    return <SandboxLoadingOverlay status={sandboxLoading ? sandboxStatus : 'building-image'} message={sandboxLoading ? sandboxMessage : 'Loading...'} />;
   }
 
   // Show onboarding wizard for first-time users

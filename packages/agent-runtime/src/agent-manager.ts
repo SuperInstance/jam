@@ -13,7 +13,7 @@ import type {
   IStatsStore,
 } from '@jam/core';
 import { createLogger } from '@jam/core';
-import { PtyManager } from './pty-manager.js';
+import type { IPtyManager } from './pty-manager.js';
 import { RuntimeRegistry } from './runtime-registry.js';
 import { AgentContextBuilder } from './agent-context-builder.js';
 import { TaskTracker } from './task-tracker.js';
@@ -83,9 +83,13 @@ export class AgentManager {
   private processingLocks = new Set<AgentId>();
   /** Output redactor — masks leaked secret values */
   private redact: (text: string) => string = (t) => t;
+  /** Optional hook called before an agent starts (e.g., to create Docker container) */
+  private preStartHook: ((agentId: AgentId, profile: AgentProfile) => Promise<void>) | null = null;
+  /** Extra env vars injected into every agent spawn (e.g., host bridge URL/token) */
+  private extraEnv: Record<string, string> = {};
 
   constructor(
-    private ptyManager: PtyManager,
+    private ptyManager: IPtyManager,
     private runtimeRegistry: RuntimeRegistry,
     private eventBus: IEventBus,
     private store: AgentStore,
@@ -222,6 +226,19 @@ export class AgentManager {
     this.updateStatus(agentId, 'starting');
     this.updateVisualState(agentId, 'idle');
 
+    // Pre-start hook (e.g., create Docker container)
+    if (this.preStartHook) {
+      try {
+        await this.preStartHook(agentId, state.profile);
+      } catch (err) {
+        const error = `Pre-start hook failed: ${String(err)}`;
+        this.updateStatus(agentId, 'error');
+        this.updateVisualState(agentId, 'error');
+        log.error(error, undefined, agentId);
+        return { success: false, error };
+      }
+    }
+
     const spawnConfig = runtime.buildSpawnConfig(state.profile);
     log.info(
       `Starting agent "${state.profile.name}": ${spawnConfig.command} ${spawnConfig.args.join(' ')}`,
@@ -233,7 +250,7 @@ export class AgentManager {
 
     const result = await this.ptyManager.spawn(agentId, spawnConfig.command, spawnConfig.args, {
       cwd: state.profile.cwd,
-      env: { ...spawnConfig.env, ...state.profile.env, ...secrets, JAM_AGENT_ID: agentId },
+      env: { ...spawnConfig.env, ...state.profile.env, ...secrets, ...this.extraEnv, JAM_AGENT_ID: agentId },
     });
 
     if (result.success) {
@@ -402,7 +419,7 @@ export class AgentManager {
       result = await runtime.execute(enrichedProfile, text, {
         sessionId,
         cwd: state.profile.cwd,
-        env: { JAM_AGENT_ID: agentId, ...secrets },
+        env: { JAM_AGENT_ID: agentId, ...secrets, ...this.extraEnv },
         onProgress,
         onOutput,
         signal: abortController.signal,
@@ -513,7 +530,7 @@ export class AgentManager {
     try {
       const result = await runtime.execute(enrichedProfile, text, {
         cwd: state.profile.cwd,
-        env: { JAM_AGENT_ID: agentId, ...secrets },
+        env: { JAM_AGENT_ID: agentId, ...secrets, ...this.extraEnv },
         onProgress,
         onOutput,
         signal: abortController.signal,
@@ -816,5 +833,15 @@ export class AgentManager {
   rebuildRedactor(): void {
     const values = this.secretValuesProvider?.() ?? [];
     this.redact = createSecretRedactor(values);
+  }
+
+  /** Register a hook that runs before each agent starts (e.g., Docker container creation) */
+  setPreStartHook(hook: (agentId: AgentId, profile: AgentProfile) => Promise<void>): void {
+    this.preStartHook = hook;
+  }
+
+  /** Set extra environment variables injected into every agent spawn (e.g., host bridge URL/token) */
+  setExtraEnv(env: Record<string, string>): void {
+    this.extraEnv = env;
   }
 }

@@ -38,7 +38,7 @@ let isQuitting = false;
 if (process.env.VITE_DEV_SERVER_URL) {
   const hmrCleanup = () => {
     try {
-      if (orchestrator) orchestrator.shutdown();
+      if (orchestrator) orchestrator.shutdown(true);
     } catch {
       // Best-effort cleanup during HMR
     }

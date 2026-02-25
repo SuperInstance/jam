@@ -9,3 +9,4 @@ export * from './relationship-store.js';
 export * from './stats-store.js';
 export * from './model-resolver.js';
 export * from './code-improvement-engine.js';
+export * from './sandbox.js';

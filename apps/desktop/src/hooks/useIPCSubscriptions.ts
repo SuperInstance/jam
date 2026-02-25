@@ -20,6 +20,7 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
   const setTranscript = useAppStore((s) => s.setTranscript);
   const setAgentActive = useAppStore((s) => s.setAgentActive);
   const addMessage = useAppStore((s) => s.addMessage);
+  const setSandboxProgress = useAppStore((s) => s.setSandboxProgress);
 
   // Soul evolved — global listener to clear reflecting state across tabs
   const setSoul = useAppStore((s) => s.setSoul);
@@ -271,6 +272,13 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
       },
     );
 
+    // Sandbox initialization progress
+    const unsubSandboxProgress = window.jam.app.onSandboxProgress(
+      ({ status, message }) => {
+        setSandboxProgress(status as Parameters<typeof setSandboxProgress>[0], message);
+      },
+    );
+
     // Soul evolved — global listener (clear reflecting state even when not viewing agent detail)
     const unsubSoulEvolved = window.jam.team.soul.onEvolved((data) => {
       setSoul(data.agentId, data.soul as unknown as SoulEntry);
@@ -299,6 +307,7 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
       unsubProgress();
       unsubQueued();
       unsubSystemNotification();
+      unsubSandboxProgress();
       unsubSoulEvolved();
     };
   }, [
@@ -314,6 +323,7 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
     setAgentActive,
     addMessage,
     enqueueTTS,
+    setSandboxProgress,
     setSoul,
   ]);
 }

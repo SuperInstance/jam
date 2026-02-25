@@ -3,6 +3,7 @@ import { createLogger } from '@jam/core';
 import type * as pty from 'node-pty';
 import treeKill from 'tree-kill';
 import { buildCleanEnv } from './utils.js';
+import { PtyDataHandler } from './pty-utils.js';
 
 const log = createLogger('PtyManager');
 
@@ -10,14 +11,21 @@ const log = createLogger('PtyManager');
  * Escape a string for use in a shell command.
  * Wraps in single quotes, escaping any embedded single quotes.
  */
-function shellEscape(s: string): string {
+export function shellEscape(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
-export interface PtyInstance {
-  agentId: AgentId;
-  process: pty.IPty;
-  scrollback: string[];
+export interface PtySpawnOptions {
+  cwd?: string;
+  env?: Record<string, string>;
+  cols?: number;
+  rows?: number;
+}
+
+export interface PtySpawnResult {
+  success: boolean;
+  pid?: number;
+  error?: string;
 }
 
 export interface PtyOutputHandler {
@@ -28,30 +36,26 @@ export interface PtyExitHandler {
   (agentId: AgentId, exitCode: number, lastOutput: string): void;
 }
 
-const SCROLLBACK_MAX = 10_000;
-const FLUSH_INTERVAL_MS = 16;
-
-// DSR (Device Status Report) pattern — CLI agents like Claude Code send ESC[6n
-// to query cursor position. If unanswered, the agent hangs waiting for a reply.
-// We intercept and auto-respond with a fake cursor position.
-// eslint-disable-next-line no-control-regex
-const DSR_PATTERN = /\x1b\[\??6n/g;
-
-function stripDsrRequests(input: string): { cleaned: string; dsrCount: number } {
-  let dsrCount = 0;
-  const cleaned = input.replace(DSR_PATTERN, () => {
-    dsrCount++;
-    return '';
-  });
-  return { cleaned, dsrCount };
+/** Abstract interface for PTY management — enables native and Docker implementations */
+export interface IPtyManager {
+  spawn(agentId: AgentId, command: string, args: string[], options: PtySpawnOptions): Promise<PtySpawnResult>;
+  write(agentId: AgentId, data: string): void;
+  resize(agentId: AgentId, cols: number, rows: number): void;
+  kill(agentId: AgentId): void;
+  getScrollback(agentId: AgentId): string;
+  isRunning(agentId: AgentId): boolean;
+  killAll(): void;
+  onOutput(handler: PtyOutputHandler): void;
+  onExit(handler: PtyExitHandler): void;
 }
 
-/** Build a CPR (Cursor Position Report) response: ESC[row;colR */
-function buildCursorPositionResponse(row = 1, col = 1): string {
-  return `\x1b[${row};${col}R`;
+export interface PtyInstance {
+  agentId: AgentId;
+  process: pty.IPty;
+  dataHandler: PtyDataHandler;
 }
 
-export class PtyManager {
+export class PtyManager implements IPtyManager {
   private instances = new Map<string, PtyInstance>();
   private outputHandler: PtyOutputHandler | null = null;
   private exitHandler: PtyExitHandler | null = null;
@@ -67,13 +71,8 @@ export class PtyManager {
     agentId: AgentId,
     command: string,
     args: string[],
-    options: {
-      cwd?: string;
-      env?: Record<string, string>;
-      cols?: number;
-      rows?: number;
-    },
-  ): Promise<{ success: boolean; pid?: number; error?: string }> {
+    options: PtySpawnOptions,
+  ): Promise<PtySpawnResult> {
     if (this.instances.has(agentId)) {
       return { success: false, error: 'PTY already exists for this agent' };
     }
@@ -108,64 +107,20 @@ export class PtyManager {
         env,
       });
 
+      // Shared data handler: DSR interception, scrollback, output batching
+      const dataHandler = new PtyDataHandler(agentId, ptyProcess, () => this.outputHandler);
+
       const instance: PtyInstance = {
         agentId,
         process: ptyProcess,
-        scrollback: [],
+        dataHandler,
       };
 
-      // Batch output for performance (~60fps)
-      let outputBuffer = '';
-      let flushTimer: ReturnType<typeof setTimeout> | null = null;
-
-      const cursorResponse = buildCursorPositionResponse();
-
-      ptyProcess.onData((data: string) => {
-        // DSR interception: CLI agents (Claude Code) send ESC[6n cursor queries.
-        // Strip them from output and auto-respond so the agent doesn't hang.
-        const { cleaned, dsrCount } = stripDsrRequests(data);
-        if (dsrCount > 0) {
-          for (let i = 0; i < dsrCount; i++) {
-            ptyProcess.write(cursorResponse);
-          }
-        }
-
-        const outputData = cleaned;
-
-        // Accumulate scrollback
-        const lines = outputData.split('\n');
-        instance.scrollback.push(...lines);
-        if (instance.scrollback.length > SCROLLBACK_MAX) {
-          instance.scrollback.splice(
-            0,
-            instance.scrollback.length - SCROLLBACK_MAX,
-          );
-        }
-
-        // Batch and flush
-        outputBuffer += outputData;
-        if (!flushTimer) {
-          flushTimer = setTimeout(() => {
-            this.outputHandler?.(agentId, outputBuffer);
-            outputBuffer = '';
-            flushTimer = null;
-          }, FLUSH_INTERVAL_MS);
-        }
-      });
+      ptyProcess.onData((data: string) => dataHandler.onData(data));
 
       ptyProcess.onExit(({ exitCode }) => {
-        // Flush any remaining output
-        if (outputBuffer) {
-          this.outputHandler?.(agentId, outputBuffer);
-          outputBuffer = '';
-        }
-        if (flushTimer) {
-          clearTimeout(flushTimer);
-          flushTimer = null;
-        }
-
-        // Capture last output before deleting instance (for crash diagnostics)
-        const lastOutput = instance.scrollback.slice(-30).join('\n');
+        dataHandler.flush();
+        const lastOutput = dataHandler.getLastOutput();
         this.instances.delete(agentId);
         this.exitHandler?.(agentId, exitCode, lastOutput);
       });
@@ -208,7 +163,7 @@ export class PtyManager {
 
   getScrollback(agentId: AgentId): string {
     const instance = this.instances.get(agentId);
-    return instance ? instance.scrollback.join('\n') : '';
+    return instance ? instance.dataHandler.scrollback.join('\n') : '';
   }
 
   isRunning(agentId: AgentId): boolean {

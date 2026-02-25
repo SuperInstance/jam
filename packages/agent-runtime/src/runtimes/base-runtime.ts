@@ -53,6 +53,22 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
     child.stdin!.end();
   }
 
+  /**
+   * Spawn a child process. Extracted as a hook so sandboxed runtimes can
+   * override to route through `docker exec` instead.
+   */
+  protected spawnProcess(
+    command: string,
+    args: string[],
+    options: { cwd: string; env: Record<string, string> },
+  ): ChildProcess {
+    return spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  }
+
   /** Concrete execute() — shared lifecycle across all runtimes */
   async execute(profile: AgentProfile, text: string, options?: ExecutionOptions): Promise<ExecutionResult> {
     const command = this.getCommand();
@@ -63,11 +79,7 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
     log.info(`Executing: ${command} ${args.join(' ').slice(0, 80)}`, undefined, profile.id);
 
     return new Promise((resolve) => {
-      const child = spawn(command, args, {
-        cwd,
-        env,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      const child = this.spawnProcess(command, args, { cwd, env });
 
       // Write input via hook (stdin by default, CLI arg for Codex)
       this.writeInput(child, profile, text);
@@ -89,13 +101,13 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
         onOutput: options?.onOutput,
       };
 
-      child.stdout.on('data', (chunk: Buffer) => {
+      child.stdout!.on('data', (chunk: Buffer) => {
         const chunkStr = chunk.toString();
         stdout += chunkStr;
         strategy.processChunk(chunkStr, callbacks);
       });
 
-      child.stderr.on('data', (chunk: Buffer) => {
+      child.stderr!.on('data', (chunk: Buffer) => {
         stderr += chunk.toString();
       });
 

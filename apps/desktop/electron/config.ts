@@ -4,6 +4,8 @@ import { app } from 'electron';
 import { createLogger } from '@jam/core';
 import type { ModelTierConfig } from '@jam/core';
 import { DEFAULT_MODEL_TIERS } from '@jam/core';
+import type { SandboxConfig } from '@jam/sandbox';
+import { DEFAULT_SANDBOX_CONFIG } from '@jam/sandbox';
 
 const log = createLogger('Config');
 
@@ -27,6 +29,8 @@ export interface CodeImprovementConfig {
   allowedAgentIds: string[];
 }
 
+export type { SandboxConfig } from '@jam/sandbox';
+
 export interface JamConfig {
   sttProvider: STTProviderType;
   ttsProvider: TTSProviderType;
@@ -48,6 +52,8 @@ export interface JamConfig {
   scheduleCheckIntervalMs: number;
   // Code improvement
   codeImprovement: CodeImprovementConfig;
+  // Docker sandbox
+  sandbox: SandboxConfig;
 }
 
 const DEFAULT_CONFIG: JamConfig = {
@@ -100,6 +106,8 @@ const DEFAULT_CONFIG: JamConfig = {
     maxImprovementsPerDay: 5,
     allowedAgentIds: [],
   },
+  // Docker sandbox (opt-in, disabled by default)
+  sandbox: { ...DEFAULT_SANDBOX_CONFIG },
 };
 
 export function loadConfig(): JamConfig {
@@ -139,6 +147,14 @@ export function loadConfig(): JamConfig {
     envOverrides.defaultModel = process.env.JAM_DEFAULT_MODEL;
   }
 
+  // Sandbox env override: JAM_SANDBOX=1 enables sandbox mode
+  const sandboxEnvOverride: Partial<SandboxConfig> = {};
+  if (process.env.JAM_SANDBOX === '1' || process.env.JAM_SANDBOX === 'true') {
+    sandboxEnvOverride.enabled = true;
+  } else if (process.env.JAM_SANDBOX === '0' || process.env.JAM_SANDBOX === 'false') {
+    sandboxEnvOverride.enabled = false;
+  }
+
   // Deep merge nested objects so partial overrides don't erase defaults
   const merged: JamConfig = {
     ...DEFAULT_CONFIG,
@@ -146,6 +162,7 @@ export function loadConfig(): JamConfig {
     ...envOverrides,
     modelTiers: { ...DEFAULT_CONFIG.modelTiers, ...fileConfig.modelTiers },
     codeImprovement: { ...DEFAULT_CONFIG.codeImprovement, ...fileConfig.codeImprovement },
+    sandbox: { ...DEFAULT_CONFIG.sandbox, ...fileConfig.sandbox, ...sandboxEnvOverride },
   };
 
   log.info(`Config resolved: stt=${merged.sttProvider}, tts=${merged.ttsProvider}, runtime=${merged.defaultRuntime}, theme=${merged.theme}`);

@@ -186,6 +186,9 @@ export interface JamAPI {
       callback: (error: { message: string; details?: string }) => void,
     ) => () => void;
     getVersion: () => Promise<string>;
+    onSandboxProgress: (
+      callback: (data: { status: string; message: string }) => void,
+    ) => () => void;
   };
 
   logs: {
@@ -491,6 +494,7 @@ contextBridge.exposeInMainWorld('jam', {
   app: {
     onError: (cb) => createEventListener('app:error', cb),
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
+    onSandboxProgress: (cb) => createEventListener('sandbox:progress', cb),
   },
 
   logs: {
