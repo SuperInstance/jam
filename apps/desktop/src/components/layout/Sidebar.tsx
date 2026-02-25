@@ -1,14 +1,13 @@
 import React from 'react';
+import { ServicePanel } from '@/components/ServiceBar';
 
 export type NavTab = 'chat' | 'agents' | 'dashboard' | 'settings';
 
 interface IconRailProps {
   expanded: boolean;
   activeTab: NavTab;
-  logsOpen: boolean;
   onToggleExpanded: () => void;
   onTabChange: (tab: NavTab) => void;
-  onToggleLogs: () => void;
 }
 
 const TABS: Array<{ id: NavTab; label: string; icon: React.ReactNode }> = [
@@ -60,17 +59,15 @@ const TABS: Array<{ id: NavTab; label: string; icon: React.ReactNode }> = [
 export const IconRail: React.FC<IconRailProps> = ({
   expanded,
   activeTab,
-  logsOpen,
   onToggleExpanded,
   onTabChange,
-  onToggleLogs,
 }) => {
   return (
     <aside
       className={`
         shrink-0 border-r border-zinc-800 bg-surface-raised
         transition-[width] duration-200 ease-out flex flex-col
-        ${expanded ? 'w-44' : 'w-12'}
+        ${expanded ? 'w-52' : 'w-12'}
       `}
     >
       {/* Hamburger toggle at top */}
@@ -96,7 +93,7 @@ export const IconRail: React.FC<IconRailProps> = ({
       </div>
 
       {/* Tab navigation */}
-      <nav className="flex flex-col gap-1 px-1.5 flex-1">
+      <nav className="flex flex-col gap-1 px-1.5">
         {TABS.map((tab) => {
           const isActive = activeTab === tab.id;
           return (
@@ -126,31 +123,8 @@ export const IconRail: React.FC<IconRailProps> = ({
         })}
       </nav>
 
-      {/* Logs toggle at bottom */}
-      <div className="shrink-0 border-t border-zinc-800 p-1.5">
-        <button
-          onClick={onToggleLogs}
-          className={`
-            flex items-center gap-3 rounded-lg transition-colors
-            ${expanded ? 'w-full px-3 py-2.5' : 'justify-center w-full py-2.5'}
-            ${logsOpen
-              ? 'text-blue-400 bg-blue-500/10'
-              : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/30'
-            }
-          `}
-          title={expanded ? undefined : (logsOpen ? 'Close logs' : 'Open logs')}
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-            <line x1="16" y1="13" x2="8" y2="13" />
-            <line x1="16" y1="17" x2="8" y2="17" />
-          </svg>
-          {expanded && (
-            <span className="text-xs font-medium">Logs</span>
-          )}
-        </button>
-      </div>
+      {/* Services panel — below nav with divider */}
+      {expanded && <ServicePanel />}
     </aside>
   );
 };

@@ -7,8 +7,9 @@ import { createSettingsSlice, type SettingsSlice } from './settingsSlice';
 import { createChatSlice, type ChatSlice } from './chatSlice';
 import { createTaskSlice, type TaskSlice } from './taskSlice';
 import { createTeamSlice, type TeamSlice } from './teamSlice';
+import { createNotificationSlice, type NotificationSlice } from './notificationSlice';
 
-export type AppStore = AgentSlice & VoiceSlice & TerminalSlice & SettingsSlice & ChatSlice & TaskSlice & TeamSlice;
+export type AppStore = AgentSlice & VoiceSlice & TerminalSlice & SettingsSlice & ChatSlice & TaskSlice & TeamSlice & NotificationSlice;
 
 export const useAppStore = create<AppStore>()(
   persist(
@@ -20,6 +21,7 @@ export const useAppStore = create<AppStore>()(
       ...createChatSlice(...args),
       ...createTaskSlice(...args),
       ...createTeamSlice(...args),
+      ...createNotificationSlice(...args),
     }),
     {
       name: 'jam-ui-store',

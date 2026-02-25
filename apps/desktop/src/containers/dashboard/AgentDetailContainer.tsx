@@ -74,6 +74,10 @@ export function AgentDetailContainer({ agentId }: AgentDetailContainerProps) {
       targetAgentId: r.targetAgentId,
       trustScore: r.trustScore,
       interactionCount: r.interactionCount,
+      delegationCount: r.delegationCount,
+      delegationSuccessRate: r.delegationSuccessRate,
+      lastInteraction: r.lastInteraction,
+      notes: r.notes,
     }));
 
   const agentMap = Object.fromEntries(

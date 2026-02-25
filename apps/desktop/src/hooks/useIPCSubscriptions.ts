@@ -263,21 +263,17 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
 
     const unsubSystemNotification = window.jam.chat.onSystemNotification(
       ({ taskId, agentId, title, success, summary }) => {
-        const msg: ChatMessage = {
-          id: crypto.randomUUID(),
-          role: 'system',
-          agentId,
-          agentName: 'JAM',
-          agentRuntime: null,
-          agentColor: '#8b5cf6',
-          content: success ? `Completed: ${title}` : `Failed: ${title}`,
-          status: success ? 'complete' : 'error',
-          source: 'text',
-          timestamp: Date.now(),
-          taskResult: { taskId, title, success, summary },
-        };
         const store = useAppStore.getState();
-        store.addMessage(msg);
+        store.addNotification({
+          id: crypto.randomUUID(),
+          type: success ? 'task_completed' : 'task_failed',
+          agentId,
+          title,
+          summary: summary ?? '',
+          taskId,
+          timestamp: Date.now(),
+          read: false,
+        });
         store.setIsProcessing(false);
       },
     );

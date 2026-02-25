@@ -1,5 +1,17 @@
 import { TraitRadar } from '@/components/charts/TraitRadar';
 
+function formatTimeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
 interface SoulViewProps {
   soul: {
     persona: string;
@@ -10,18 +22,26 @@ interface SoulViewProps {
     weaknesses: string[];
     learnings: string[];
     version: number;
+    lastReflection?: string;
   };
 }
 
 export function SoulView({ soul }: SoulViewProps) {
   return (
     <div className="space-y-6">
-      {/* Header with version */}
+      {/* Header with version + last updated */}
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-white">Soul Profile</h3>
-        <span className="text-xs px-2 py-0.5 rounded bg-zinc-700 text-zinc-400">
-          v{soul.version}
-        </span>
+        <div className="flex items-center gap-2">
+          {soul.lastReflection && (
+            <span className="text-[10px] text-zinc-500" title={new Date(soul.lastReflection).toLocaleString()}>
+              Updated {formatTimeAgo(soul.lastReflection)}
+            </span>
+          )}
+          <span className="text-xs px-2 py-0.5 rounded bg-zinc-700 text-zinc-400">
+            v{soul.version}
+          </span>
+        </div>
       </div>
 
       {/* Role */}

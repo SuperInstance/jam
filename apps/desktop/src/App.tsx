@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useAppStore } from '@/store';
 import { AppShell } from '@/components/layout/AppShell';
+import { HeaderBar } from '@/components/layout/TitleBar';
 import { IconRail, type NavTab } from '@/components/layout/Sidebar';
 import { AgentsOverviewContainer } from '@/containers/AgentsOverviewContainer';
 import { AgentStageContainer } from '@/containers/AgentStageContainer';
@@ -13,9 +14,9 @@ import { OnboardingContainer } from '@/containers/OnboardingContainer';
 import { SetupBanner } from '@/components/SetupBanner';
 import { ThreadDrawer } from '@/components/chat/ThreadDrawer';
 import { LogsDrawer } from '@/components/LogsDrawer';
-import { ServiceBar } from '@/components/ServiceBar';
 import { useTTSQueue } from '@/hooks/useTTSQueue';
 import { useIPCSubscriptions } from '@/hooks/useIPCSubscriptions';
+import { NotificationPanel } from '@/components/NotificationPanel';
 
 export default function App() {
   const navExpanded = useAppStore((s) => s.settings.navExpanded);
@@ -26,6 +27,22 @@ export default function App() {
   const threadAgentId = useAppStore((s) => s.threadAgentId);
   const setThreadAgent = useAppStore((s) => s.setThreadAgent);
   const [activeTab, setActiveTab] = useState<NavTab>('chat');
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const unreadCount = useAppStore((s) => s.notifications.filter((n) => !n.read).length);
+  const voiceState = useAppStore((s) => s.voiceState);
+  const agents = useAppStore((s) => s.agents);
+
+  const headerAgents = useMemo(() =>
+    Object.values(agents)
+      .filter((a) => !a.profile.isSystem && a.status === 'running')
+      .map((a) => ({
+        id: a.profile.id,
+        name: a.profile.name,
+        color: a.profile.color,
+        visualState: a.visualState,
+      })),
+    [agents],
+  );
 
   // Onboarding gate
   const [onboardingChecked, setOnboardingChecked] = useState(false);
@@ -87,37 +104,50 @@ export default function App() {
 
   return (
     <AppShell>
-      <IconRail
-        expanded={navExpanded}
-        activeTab={activeTab}
+      <HeaderBar
+        agents={headerAgents}
+        voiceState={voiceState}
+        notificationCount={unreadCount}
+        notificationOpen={notificationOpen}
         logsOpen={logsDrawerOpen}
-        onToggleExpanded={() => setNavExpanded(!navExpanded)}
-        onTabChange={setActiveTab}
+        onToggleNotifications={() => setNotificationOpen(!notificationOpen)}
         onToggleLogs={() => setLogsDrawerOpen(!logsDrawerOpen)}
       />
 
-      <div className="flex-1 flex flex-col min-w-0">
-        <SetupBanner onOpenSettings={() => setActiveTab('settings')} />
-        <div className="flex-1 flex min-h-0">
-          <div className="flex-1 flex flex-col min-w-0">
-            {renderMainContent()}
+      <div className="flex flex-1 min-h-0">
+        <IconRail
+          expanded={navExpanded}
+          activeTab={activeTab}
+          onToggleExpanded={() => setNavExpanded(!navExpanded)}
+          onTabChange={setActiveTab}
+        />
+
+        {notificationOpen && (
+          <NotificationPanel onClose={() => setNotificationOpen(false)} />
+        )}
+
+        <div className="flex-1 flex flex-col min-w-0">
+          <SetupBanner onOpenSettings={() => setActiveTab('settings')} />
+          <div className="flex-1 flex min-h-0">
+            <div className="flex-1 flex flex-col min-w-0">
+              {renderMainContent()}
+            </div>
+
+            {/* Thread drawer — right-side terminal panel (priority over logs) */}
+            {threadAgentId && (
+              <ThreadDrawer
+                agentId={threadAgentId}
+                onClose={() => setThreadAgent(null)}
+              />
+            )}
+
+            {/* Logs drawer — right-side log panel */}
+            {logsDrawerOpen && !threadAgentId && (
+              <LogsDrawer onClose={() => setLogsDrawerOpen(false)} />
+            )}
           </div>
-
-          {/* Thread drawer — right-side terminal panel (priority over logs) */}
-          {threadAgentId && (
-            <ThreadDrawer
-              agentId={threadAgentId}
-              onClose={() => setThreadAgent(null)}
-            />
-          )}
-
-          {/* Logs drawer — right-side log panel */}
-          {logsDrawerOpen && !threadAgentId && (
-            <LogsDrawer onClose={() => setLogsDrawerOpen(false)} />
-          )}
+          <CommandBarContainer />
         </div>
-        <ServiceBar />
-        <CommandBarContainer />
       </div>
     </AppShell>
   );
