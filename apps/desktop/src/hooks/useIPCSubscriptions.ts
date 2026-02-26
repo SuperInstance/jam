@@ -124,10 +124,6 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
 
     const unsubAcknowledged = window.jam.chat.onAgentAcknowledged(
       ({ agentId, agentName, agentRuntime, agentColor, ackText }) => {
-        // Suppress ack messages from system agents — they use system notifications instead
-        const agentEntry = store().agents[agentId];
-        if (agentEntry?.profile.isSystem) return;
-
         const msg: ChatMessage = {
           id: crypto.randomUUID(),
           role: 'agent',
@@ -165,10 +161,6 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
 
     const unsubAgentResponse = window.jam.chat.onAgentResponse(
       ({ agentId, agentName, agentRuntime, agentColor, text, error }) => {
-        // Suppress response messages from system agents — they use system notifications
-        const agentEntry = store().agents[agentId];
-        if (agentEntry?.profile.isSystem) return;
-
         const msg: ChatMessage = {
           id: crypto.randomUUID(),
           role: 'agent',
@@ -205,10 +197,6 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
 
     const unsubProgress = window.jam.chat.onAgentProgress(
       ({ agentId, agentName, agentRuntime, agentColor, summary }) => {
-        // Suppress progress messages from system agents
-        const agentEntry = store().agents[agentId];
-        if (agentEntry?.profile.isSystem) return;
-
         const msg: ChatMessage = {
           id: crypto.randomUUID(),
           role: 'system',
