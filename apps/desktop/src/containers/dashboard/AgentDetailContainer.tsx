@@ -38,20 +38,31 @@ export function AgentDetailContainer({ agentId }: AgentDetailContainerProps) {
 
   useEffect(() => {
     refreshServices();
-    // No interval here — ServiceBar already polls services globally every 10s.
-    // We only do a one-time fetch on mount + refresh after stop/restart actions.
-  }, [refreshServices]);
+
+    // Subscribe to real-time service status changes from the main process
+    const unsubChanged = window.jam.services.onChanged((allServices) => {
+      const agentServices = allServices.filter((s) => s.agentId === agentId);
+      setServices(agentServices);
+    });
+
+    // Light fallback poll (30s) in case events are missed
+    const interval = setInterval(refreshServices, 30_000);
+
+    return () => {
+      unsubChanged();
+      clearInterval(interval);
+    };
+  }, [refreshServices, agentId]);
 
   const handleStopService = useCallback(async (port: number) => {
     await window.jam.services.stop(port);
-    refreshServices();
-  }, [refreshServices]);
+    // UI updates instantly via services:changed event
+  }, []);
 
   const handleRestartService = useCallback(async (serviceName: string) => {
     await window.jam.services.restart(serviceName);
-    // Brief delay for process to start before refreshing
-    setTimeout(refreshServices, 1000);
-  }, [refreshServices]);
+    // UI updates instantly via services:changed event
+  }, []);
 
   const handleOpenService = useCallback((port: number) => {
     window.jam.services.openUrl(port);

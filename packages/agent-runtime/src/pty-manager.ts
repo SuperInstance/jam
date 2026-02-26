@@ -156,8 +156,18 @@ export class PtyManager implements IPtyManager {
       // Kill the entire process tree (shell + all children spawned by the agent)
       // Uses pgrep -P on macOS to recursively find descendants, like VS Code's terminateProcess.sh
       treeKill(pid, 'SIGTERM', (err) => {
-        if (err) log.warn(`tree-kill failed for PID ${pid}: ${err.message}`, undefined, agentId);
+        if (err) log.warn(`tree-kill SIGTERM failed for PID ${pid}: ${err.message}`, undefined, agentId);
       });
+      // Escalate to SIGKILL if the process ignores SIGTERM (e.g. deep in an operation)
+      setTimeout(() => {
+        try {
+          process.kill(pid, 0); // Check if still alive (throws if dead)
+          log.warn(`PID ${pid} ignored SIGTERM — escalating to SIGKILL`, undefined, agentId);
+          treeKill(pid, 'SIGKILL', () => {});
+        } catch {
+          // Process already dead — good
+        }
+      }, 3000);
     }
   }
 

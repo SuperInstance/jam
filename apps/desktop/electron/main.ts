@@ -306,7 +306,7 @@ app.on('before-quit', (event) => {
   }
 
   if (!shutdownComplete) {
-    // Prevent quit until async store flushes complete
+    // Prevent quit until async store flushes + service cleanup complete
     event.preventDefault();
     orchestrator.shutdown().finally(() => {
       shutdownComplete = true;
@@ -314,3 +314,19 @@ app.on('before-quit', (event) => {
     });
   }
 });
+
+// Graceful shutdown on signals (Ctrl+C, kill, etc.)
+// Without these, agent PTY processes and spawned services become orphans.
+for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(sig, () => {
+    log.info(`Received ${sig} — shutting down`);
+    isQuitting = true;
+    if (!shutdownComplete) {
+      orchestrator.shutdown().finally(() => {
+        process.exit(0);
+      });
+    } else {
+      process.exit(0);
+    }
+  });
+}

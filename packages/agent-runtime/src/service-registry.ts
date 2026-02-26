@@ -46,6 +46,9 @@ export interface ContainerOps {
   restartInContainer(agentId: string, command: string, cwd: string): Promise<boolean>;
 }
 
+/** Listener for service status changes */
+export type ServiceChangeListener = (services: TrackedService[]) => void;
+
 export class ServiceRegistry {
   /** Cached services by agentId */
   private services = new Map<string, TrackedService[]>();
@@ -59,6 +62,22 @@ export class ServiceRegistry {
   private portResolver: PortResolver = (_agentId, port) => port;
   /** Container operations for sandbox mode (stop/restart inside Docker) */
   private containerOps: ContainerOps | null = null;
+  /** Change listeners — notified when any service status changes */
+  private changeListeners: ServiceChangeListener[] = [];
+
+  /** Register a listener that fires whenever any service status changes */
+  onChange(listener: ServiceChangeListener): void {
+    this.changeListeners.push(listener);
+  }
+
+  /** Notify all change listeners with the full service list */
+  private notifyChange(): void {
+    if (this.changeListeners.length === 0) return;
+    const all = this.list();
+    for (const listener of this.changeListeners) {
+      listener(all);
+    }
+  }
 
   /** Set a custom port resolver (for Docker sandbox mode) */
   setPortResolver(resolver: PortResolver): void {
@@ -146,6 +165,7 @@ export class ServiceRegistry {
     const deduped = Array.from(byName.values());
 
     this.services.set(agentId, deduped);
+    this.notifyChange();
     return deduped;
   }
 
@@ -217,6 +237,7 @@ export class ServiceRegistry {
         }
       }
     }
+    this.notifyChange();
   }
 
   /** Recursively find .services.json files up to MAX_SCAN_DEPTH */
@@ -312,6 +333,7 @@ export class ServiceRegistry {
     entry.startedAt = new Date().toISOString();
     this.recentRestarts.set(entry.name, Date.now());
     this.failureCounts.delete(`${entry.agentId}:${entry.name}`);
+    this.notifyChange();
   }
 
   /** Resolve a container port to the host port for browser access.
@@ -348,6 +370,8 @@ export class ServiceRegistry {
 
   /** Run a single health check cycle across all cached services */
   private async runHealthChecks(): Promise<void> {
+    let changed = false;
+
     for (const [, services] of this.services) {
       for (const svc of services) {
         const key = `${svc.agentId}:${svc.name}`;
@@ -366,6 +390,7 @@ export class ServiceRegistry {
           // Service is up — reset failure count and mark alive
           if (!svc.alive) {
             log.info(`Service "${svc.name}" (port ${svc.port}) is now alive`);
+            changed = true;
           }
           svc.alive = true;
           this.failureCounts.delete(key);
@@ -377,9 +402,14 @@ export class ServiceRegistry {
           if (failures >= FAILURE_THRESHOLD && svc.alive !== false) {
             log.warn(`Service "${svc.name}" (port ${svc.port}) marked dead after ${failures} consecutive failures`);
             svc.alive = false;
+            changed = true;
           }
         }
       }
+    }
+
+    if (changed) {
+      this.notifyChange();
     }
   }
 
@@ -388,6 +418,7 @@ export class ServiceRegistry {
     const services = this.services.get(agentId) ?? [];
     await Promise.all(services.map(svc => this.killServiceByPort(svc.agentId, svc.port, svc.name)));
     this.services.delete(agentId);
+    this.notifyChange();
   }
 
   /** Stop ALL tracked services across all agents */

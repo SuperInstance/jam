@@ -227,6 +227,18 @@ export interface JamAPI {
     stop: (port: number) => Promise<{ success: boolean }>;
     restart: (serviceName: string) => Promise<{ success: boolean; error?: string }>;
     openUrl: (port: number) => Promise<{ success: boolean }>;
+    onChanged: (
+      callback: (services: Array<{
+        agentId: string;
+        port: number;
+        name: string;
+        logFile?: string;
+        startedAt: string;
+        alive?: boolean;
+        command?: string;
+        cwd?: string;
+      }>) => void,
+    ) => () => void;
   };
 
   chat: {

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, shell, clipboard, Notification } from 'electron';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { readFile, readdir, stat, mkdir, writeFile } from 'node:fs/promises';
+import { readFile, readdir, stat, mkdir, writeFile, unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { EventBus } from '@jam/eventbus';
 import {
@@ -127,6 +127,11 @@ export class Orchestrator {
     this.appStore = new AppStore();
     this.commandParser = new CommandParser();
     this.serviceRegistry = new ServiceRegistry();
+
+    // Forward service status changes to renderer for real-time UI updates
+    this.serviceRegistry.onChange((services) => {
+      this.sendToRenderer('services:changed', services);
+    });
 
     // Initialize PTY manager — sandbox mode or native
     if (this.config.sandbox.enabled) {
@@ -940,6 +945,9 @@ export class Orchestrator {
     // Wait for Docker image to be ready before launching any containers
     await this.imageReady;
 
+    // Clean up any LaunchAgent plists agents may have installed
+    await this.cleanupAgentLaunchAgents();
+
     const agents = this.agentManager.list();
     const autoStartAgents = agents.filter((a) => a.profile.autoStart);
 
@@ -968,8 +976,9 @@ export class Orchestrator {
       });
     }
 
-    // Initial scan for background services agents may have left running
-    this.scanServices();
+    // Initial scan: find background services from previous sessions.
+    // Any service still listening from a prior run is an orphan — kill it.
+    await this.cleanupOrphanServices();
     this.serviceRegistry.startHealthMonitor();
 
     // Start team services
@@ -982,6 +991,82 @@ export class Orchestrator {
       }
     }
     log.info('Team services started');
+  }
+
+  /**
+   * Remove any LaunchAgent plists agents may have installed.
+   * Agents are forbidden from creating system daemons, but older agents or
+   * misbehaving LLMs may have created them before the rule was added.
+   * Scans ~/Library/LaunchAgents for plists referencing .jam/agents paths.
+   */
+  async cleanupAgentLaunchAgents(): Promise<void> {
+    if (process.platform !== 'darwin') return;
+
+    const launchAgentsDir = join(homedir(), 'Library', 'LaunchAgents');
+    try {
+      const entries = await readdir(launchAgentsDir);
+      const uid = process.getuid?.() ?? '';
+
+      for (const entry of entries) {
+        if (!entry.endsWith('.plist')) continue;
+
+        // Match known patterns: com.jam.*, com.<agentname>.*, or any plist
+        // that references the .jam/agents directory
+        const filePath = join(launchAgentsDir, entry);
+        let isAgentPlist = entry.startsWith('com.jam.');
+
+        if (!isAgentPlist) {
+          try {
+            const content = await readFile(filePath, 'utf-8');
+            isAgentPlist = content.includes('.jam/agents/');
+          } catch { /* unreadable */ }
+        }
+
+        if (isAgentPlist) {
+          log.warn(`Removing agent-installed LaunchAgent: ${entry}`);
+          try {
+            // Unload first (bootout), then delete
+            try {
+              const { execFileSync } = require('node:child_process') as typeof import('node:child_process');
+              execFileSync('launchctl', ['bootout', `gui/${uid}`, filePath], { timeout: 5000 });
+            } catch { /* may not be loaded */ }
+            await unlink(filePath);
+            log.info(`Removed LaunchAgent: ${entry}`);
+          } catch (err) {
+            log.warn(`Failed to remove LaunchAgent ${entry}: ${String(err)}`);
+          }
+        }
+      }
+    } catch {
+      // ~/Library/LaunchAgents may not exist
+    }
+  }
+
+  /**
+   * Kill orphan services left over from a previous session.
+   * Scans all agent workspaces for .services.json, checks which ports are still
+   * alive, and kills them. This handles the case where the app crashed or was
+   * force-quit without a clean shutdown.
+   */
+  async cleanupOrphanServices(): Promise<void> {
+    try {
+      await this.scanServices();
+      const services = this.serviceRegistry.list();
+      const alive = services.filter(s => s.alive);
+
+      if (alive.length === 0) {
+        log.info('No orphan services found from previous session');
+        return;
+      }
+
+      log.warn(`Found ${alive.length} orphan service(s) from previous session — killing them`);
+      for (const svc of alive) {
+        log.info(`Killing orphan service "${svc.name}" on port ${svc.port}`);
+        await this.serviceRegistry.stopService(svc.port);
+      }
+    } catch (err) {
+      log.warn(`Orphan service cleanup failed: ${String(err)}`);
+    }
   }
 
   /** Scan all agent workspaces for .services.json and update the registry */
@@ -1020,8 +1105,16 @@ export class Orchestrator {
     ]);
 
     this.agentManager.stopHealthCheck();
+
+    // Stop all agent-spawned services BEFORE killing agents.
+    // Scan first to ensure the registry is up-to-date (agents may have spawned
+    // new services since the last periodic scan).
+    try {
+      await this.scanServices();
+    } catch { /* best-effort scan */ }
+    await this.serviceRegistry.stopAll();
+
     this.agentManager.stopAll();
-    this.serviceRegistry.stopAll().catch(() => {});
     this.ptyManager.killAll();
 
     // Stop host bridge
@@ -1093,6 +1186,21 @@ const PROCESS_MANAGEMENT_SKILL = [
   '- 3020-3029: Database UIs, admin panels',
   '- 3030+: Other services',
   '',
+  '## FORBIDDEN — Do NOT Create System Daemons',
+  '',
+  'You are **strictly prohibited** from creating persistent system-level services that survive outside of Jam:',
+  '',
+  '- **NO** `launchctl`, `launchd`, or LaunchAgent/LaunchDaemon plist files',
+  '- **NO** `systemctl`, `systemd`, or `.service` unit files',
+  '- **NO** `crontab` entries or cron jobs',
+  '- **NO** writing to `~/Library/LaunchAgents/`, `/Library/LaunchDaemons/`, or `/etc/systemd/`',
+  '- **NO** watchdog scripts, monitor scripts, or health-check daemons',
+  '- **NO** auto-restart wrappers that respawn processes independently of Jam',
+  '',
+  'Jam manages your service lifecycle. If a service needs to be restarted, Jam handles it.',
+  'If you need scheduled tasks, ask the user to set them up through Jam\'s task scheduler.',
+  'Creating system daemons causes orphan processes that consume resources indefinitely.',
+  '',
   '## Rules',
   '1. **NEVER** run long-lived processes in the foreground (they block you forever)',
   '2. **NEVER** use `tail -f`, `watch`, or stream logs — they consume infinite tokens',
@@ -1100,6 +1208,7 @@ const PROCESS_MANAGEMENT_SKILL = [
   '4. **ALWAYS** return control after confirming the process started successfully',
   '5. **ALWAYS** register the service in `.services.json` so Jam can track and manage it',
   '6. **ALWAYS** use a port in the range 3000-3099 so Jam can detect and reach it',
+  '7. **NEVER** create LaunchAgents, systemd units, cron jobs, or any persistent daemon',
   '',
   '## How to Start a Background Process',
   '',
