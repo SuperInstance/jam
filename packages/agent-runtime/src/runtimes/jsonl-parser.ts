@@ -162,6 +162,10 @@ export function parseJsonlResult(stdout: string): ExecutionResult {
   // Fallback: try as single JSON
   try {
     const data = JSON.parse(stdout);
+    // System init message is not result text — skip it
+    if (data.type === 'system' && data.subtype === 'init') {
+      return { success: true, text: '', sessionId: data.session_id, usage };
+    }
     return {
       success: true,
       text: data.result ?? data.text ?? data.content ?? stdout,

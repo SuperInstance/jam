@@ -1,4 +1,4 @@
-import { TraitRadar } from '@/components/charts/TraitRadar';
+import { TraitViews } from '@/components/charts/TraitViews';
 import { formatTimeAgo } from '@/utils/format';
 
 interface SoulViewProps {
@@ -47,11 +47,9 @@ export function SoulView({ soul }: SoulViewProps) {
         <p className="text-sm text-zinc-300 leading-relaxed">{soul.persona}</p>
       </div>
 
-      {/* Trait Radar */}
+      {/* Traits */}
       {Object.keys(soul.traits).length >= 3 && (
-        <div className="flex justify-center">
-          <TraitRadar traits={soul.traits} size={200} />
-        </div>
+        <TraitViews traits={soul.traits} />
       )}
 
       {/* Goals */}

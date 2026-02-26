@@ -30,6 +30,8 @@ function sanitizeResultText(text: string): string {
     const obj = JSON.parse(trimmed);
     // Claude Code result event: {"type":"result","result":"actual text",...}
     if (obj.type === 'result' && typeof obj.result === 'string') return obj.result;
+    // System init message — never show in chat (leaks when agent is stopped mid-execution)
+    if (obj.type === 'system' && obj.subtype === 'init') return '';
     // Generic wrappers
     if (typeof obj.text === 'string') return obj.text;
     if (typeof obj.content === 'string') return obj.content;
