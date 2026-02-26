@@ -3,6 +3,31 @@ import { join, dirname } from 'node:path';
 import type { SoulStructure, IEventBus } from '@jam/core';
 import { Events } from '@jam/core';
 
+/** Normalize a trait name to a canonical stem for fuzzy matching.
+ *  Strips common suffixes (-ness, -ity, -ive, -tion) and normalizes separators. */
+function traitStem(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[-_\s]+/g, '_')
+    .replace(/(ness|ity|ive|tion|ment)$/, '')
+    .replace(/_$/, '');
+}
+
+/** Find the existing trait key that matches `incoming`, or return `incoming` as-is if no match. */
+function findCanonicalTrait(incoming: string, existing: Record<string, number>): string {
+  // Exact match first
+  if (incoming in existing) return incoming;
+
+  // Fuzzy match: compare stems
+  const incomingStem = traitStem(incoming);
+  for (const key of Object.keys(existing)) {
+    if (traitStem(key) === incomingStem) return key;
+  }
+
+  // No match — this is a genuinely new trait
+  return incoming;
+}
+
 function defaultSoul(): SoulStructure {
   return {
     persona: '',
@@ -197,8 +222,10 @@ export class SoulManager {
     }
     if (reflections.traitAdjustments) {
       for (const [trait, delta] of Object.entries(reflections.traitAdjustments)) {
-        const current = soul.traits[trait] ?? 0.5;
-        soul.traits[trait] = Math.max(0, Math.min(1, current + delta));
+        // Find existing trait that matches (case-insensitive, ignoring suffixes like -ness/-ity)
+        const canonical = findCanonicalTrait(trait, soul.traits);
+        const current = soul.traits[canonical] ?? 0.5;
+        soul.traits[canonical] = Math.max(0, Math.min(1, current + delta));
       }
     }
     if (reflections.newGoals) {

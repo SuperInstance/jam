@@ -225,6 +225,22 @@ export class Orchestrator {
     const contextBuilder = new AgentContextBuilder();
     const taskTracker = new TaskTracker();
 
+    // Tell agents whether they're running in sandbox or on host
+    if (this.containerManager) {
+      contextBuilder.setExecutionEnvironment({
+        mode: 'sandbox',
+        containerWorkdir: '/workspace',
+        hostBridgeUrl: `http://host.docker.internal:${this.config.sandbox.hostBridgePort}/bridge`,
+        mounts: [
+          { containerPath: '/workspace', description: 'Agent workspace (bind-mounted from host)' },
+          { containerPath: '/shared-skills', description: 'Shared skills directory', readOnly: true },
+          { containerPath: '/home/agent/.claude', description: 'Claude Code credentials', readOnly: true },
+        ],
+      });
+    } else {
+      contextBuilder.setExecutionEnvironment({ mode: 'host' });
+    }
+
     this.agentManager = new AgentManager(
       this.ptyManager,
       this.runtimeRegistry,

@@ -295,13 +295,27 @@ export class SelfImprovementEngine {
       lines.push(`- Recent learnings: ${soul.learnings.slice(-5).join(', ')}`);
     }
 
+    // List existing traits so the LLM reuses canonical names
+    const existingTraits = Object.entries(soul.traits);
+    if (existingTraits.length > 0) {
+      lines.push('');
+      lines.push('## Your Existing Traits (use these exact names)');
+      for (const [name, value] of existingTraits) {
+        lines.push(`- ${name}: ${value}`);
+      }
+      lines.push('');
+      lines.push('IMPORTANT: When adjusting traits, you MUST use the exact trait names listed above.');
+      lines.push('Do NOT create synonyms or variants (e.g., do not add "proactiveness" if "proactive" exists).');
+      lines.push('Only add a genuinely new trait if it represents a concept not already covered.');
+    }
+
     lines.push('');
     lines.push('Respond with a JSON object:');
     lines.push('```json');
     lines.push('{');
     lines.push('  "role": "Your Role Title (2-5 words)",');
     lines.push('  "newLearnings": ["specific lesson from task X", ...],');
-    lines.push('  "traitAdjustments": { "traitName": 0.05, ... },');
+    lines.push('  "traitAdjustments": { "existing_trait_name": 0.05, ... },');
     lines.push('  "newGoals": ["goal based on observed pattern", ...],');
     lines.push('  "proactiveTasks": [{ "title": "...", "description": "..." }, ...]');
     lines.push('}');

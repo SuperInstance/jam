@@ -28,15 +28,33 @@ const CONVERSATION_DIR = 'conversations';
 const SKILLS_DIR = 'skills';
 const SOUL_FILE = 'SOUL.md';
 
+export interface ExecutionEnvironment {
+  /** 'sandbox' = Docker container, 'host' = native on user's machine */
+  mode: 'sandbox' | 'host';
+  /** Container workspace path (e.g. /workspace) — only relevant in sandbox mode */
+  containerWorkdir?: string;
+  /** Host bridge URL for sandbox agents to call host operations */
+  hostBridgeUrl?: string;
+  /** Paths mounted into the container */
+  mounts?: { containerPath: string; description: string; readOnly?: boolean }[];
+}
+
 export class AgentContextBuilder {
   /** Shared skills directory — loaded for all agents (agent-specific overrides shared) */
   private sharedSkillsDir: string | null = null;
+
+  /** Execution environment — set once by orchestrator at startup */
+  private executionEnv: ExecutionEnvironment = { mode: 'host' };
 
   /** Cache for parsed skills — keyed by directory path, invalidated by mtime */
   private skillsCache: Map<string, { skills: SkillDefinition[]; mtime: number }> = new Map();
 
   setSharedSkillsDir(dir: string): void {
     this.sharedSkillsDir = dir;
+  }
+
+  setExecutionEnvironment(env: ExecutionEnvironment): void {
+    this.executionEnv = env;
   }
 
   /** Build enriched profile with SOUL.md, conversation history, and matched skills */
@@ -275,11 +293,43 @@ export class AgentContextBuilder {
     // 1. Identity
     sections.push(`Your name is ${profile.name}. When asked who you are, respond as ${profile.name}.`);
 
-    // 2. Workspace
+    // 2. Workspace + Execution Environment
     if (profile.cwd) {
       sections.push(
         `Your workspace directory is: ${profile.cwd}`,
         'All files you create should be placed in this directory unless the user specifies otherwise.',
+      );
+    }
+
+    if (this.executionEnv.mode === 'sandbox') {
+      const envLines = [
+        '--- EXECUTION ENVIRONMENT ---',
+        'You are running inside a Docker container (sandboxed environment).',
+        `Your working directory inside the container is: ${this.executionEnv.containerWorkdir ?? '/workspace'}`,
+        'Your workspace is bind-mounted from the host — file changes persist.',
+      ];
+      if (this.executionEnv.mounts?.length) {
+        envLines.push('Mounted paths:');
+        for (const m of this.executionEnv.mounts) {
+          envLines.push(`  - ${m.containerPath}: ${m.description}${m.readOnly ? ' (read-only)' : ''}`);
+        }
+      }
+      if (this.executionEnv.hostBridgeUrl) {
+        envLines.push(
+          'Host bridge available — you can call host operations (open URLs, clipboard, notifications) via:',
+          `  POST ${this.executionEnv.hostBridgeUrl}`,
+          '  Header: Authorization: Bearer $JAM_HOST_BRIDGE_TOKEN',
+          '  Body: {"action": "openExternal", "url": "https://..."} | {"action": "readClipboard"} | {"action": "writeClipboard", "text": "..."} | {"action": "showNotification", "title": "...", "body": "..."}',
+        );
+      }
+      envLines.push('--- END EXECUTION ENVIRONMENT ---');
+      sections.push(envLines.join('\n'));
+    } else {
+      sections.push(
+        '--- EXECUTION ENVIRONMENT ---',
+        'You are running natively on the host machine (no sandbox).',
+        'You have direct access to the filesystem and system tools.',
+        '--- END EXECUTION ENVIRONMENT ---',
       );
     }
 

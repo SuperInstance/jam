@@ -16,7 +16,7 @@ export { JsonlOutputStrategy, ThrottledOutputStrategy } from './runtimes/output-
 export type { IPtyManager, PtyInstance, PtySpawnOptions, PtySpawnResult, PtyOutputHandler, PtyExitHandler } from './pty-manager.js';
 export { shellEscape } from './pty-manager.js';
 export type { AgentStore, SecretResolver, SecretValuesProvider } from './agent-manager.js';
-export type { ConversationEntry, SkillDefinition } from './agent-context-builder.js';
+export type { ConversationEntry, SkillDefinition, ExecutionEnvironment } from './agent-context-builder.js';
 export type { TaskInfo, TaskStep } from './task-tracker.js';
 export type { TrackedService, PortResolver, ContainerOps } from './service-registry.js';
 export { buildCleanEnv } from './utils.js';

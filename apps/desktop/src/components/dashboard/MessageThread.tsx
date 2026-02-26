@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Streamdown } from 'streamdown';
 import { code } from '@streamdown/code';
 
@@ -20,21 +20,33 @@ export const MessageThread = React.memo(function MessageThread({ messages, agent
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [autoScroll, setAutoScroll] = useState(true);
+  const [atBottom, setAtBottom] = useState(true);
+  const prevMsgCount = useRef(messages.length);
 
-  // Auto-scroll to bottom when new messages arrive
+  // Scroll to bottom — instant on mount/channel switch, smooth on new messages
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'instant') => {
+    bottomRef.current?.scrollIntoView({ behavior });
+  }, []);
+
+  // Instant scroll on mount or when message list resets (channel switch)
   useEffect(() => {
-    if (autoScroll) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    scrollToBottom('instant');
+    prevMsgCount.current = messages.length;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Smooth scroll only when new messages arrive (and user is at bottom)
+  useEffect(() => {
+    if (messages.length > prevMsgCount.current && atBottom) {
+      scrollToBottom('instant');
     }
-  }, [messages, autoScroll]);
+    prevMsgCount.current = messages.length;
+  }, [messages.length, atBottom, scrollToBottom]);
 
   const handleScroll = () => {
     const el = containerRef.current;
     if (!el) return;
-    // If user scrolled up more than 80px from bottom, disable auto-scroll
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-    setAutoScroll(atBottom);
+    setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -43,11 +55,13 @@ export const MessageThread = React.memo(function MessageThread({ messages, agent
     if (!trimmed) return;
     onSend(trimmed);
     setInput('');
-    setAutoScroll(true);
+    setAtBottom(true);
+    // Scroll after send — slight delay for DOM update
+    requestAnimationFrame(() => scrollToBottom('instant'));
   };
 
   return (
-    <div className="flex flex-col h-full bg-zinc-900">
+    <div className="flex flex-col h-full bg-zinc-900 relative">
       {/* Message list */}
       <div
         ref={containerRef}
@@ -105,6 +119,22 @@ export const MessageThread = React.memo(function MessageThread({ messages, agent
 
         <div ref={bottomRef} />
       </div>
+
+      {/* Scroll to bottom button */}
+      {!atBottom && (
+        <button
+          onClick={() => {
+            scrollToBottom('instant');
+            setAtBottom(true);
+          }}
+          className="absolute bottom-20 right-6 w-8 h-8 rounded-full bg-zinc-700 border border-zinc-600 flex items-center justify-center text-zinc-300 hover:bg-zinc-600 hover:text-white transition-colors shadow-lg"
+          title="Scroll to bottom"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+      )}
 
       {/* Input */}
       <form onSubmit={handleSubmit} className="p-3 border-t border-zinc-700">
