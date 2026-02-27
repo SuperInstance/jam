@@ -22,7 +22,8 @@
       "@jam/agent-runtime": ["./packages/agent-runtime/src"],
       "@jam/voice": ["./packages/voice/src"],
       "@jam/memory": ["./packages/memory/src"],
-      "@jam/team": ["./packages/team/src"]
+      "@jam/team": ["./packages/team/src"],
+      "@jam/sandbox": ["./packages/sandbox/src"]
     }
   },
   "exclude": ["node_modules", "dist"]
