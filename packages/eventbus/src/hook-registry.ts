@@ -18,7 +18,7 @@ export class HookRegistry {
     this.hooks.push({ event, handler, priority });
     this.hooks.sort((a, b) => b.priority - a.priority);
 
-    const unsubscribe = this.eventBus.on(event, (payload) => {
+    const unsubscribe = this.eventBus.on(event, (payload: unknown) => {
       try {
         handler(payload);
       } catch (error) {

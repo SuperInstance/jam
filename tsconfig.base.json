@@ -13,7 +13,6 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "composite": true,
     "outDir": "dist",
     "baseUrl": ".",
     "paths": {

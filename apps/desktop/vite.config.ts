@@ -30,6 +30,17 @@ export default defineConfig({
               },
             },
           },
+          resolve: {
+            alias: {
+              '@jam/core': path.resolve(__dirname, '../../packages/core/src'),
+              '@jam/eventbus': path.resolve(__dirname, '../../packages/eventbus/src'),
+              '@jam/agent-runtime': path.resolve(__dirname, '../../packages/agent-runtime/src'),
+              '@jam/voice': path.resolve(__dirname, '../../packages/voice/src'),
+              '@jam/memory': path.resolve(__dirname, '../../packages/memory/src'),
+              '@jam/team': path.resolve(__dirname, '../../packages/team/src'),
+              '@jam/sandbox': path.resolve(__dirname, '../../packages/sandbox/src'),
+            },
+          },
         },
       },
       {

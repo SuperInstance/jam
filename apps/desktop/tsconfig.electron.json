@@ -6,19 +6,10 @@
     "moduleResolution": "node",
     "esModuleInterop": true,
     "strict": true,
-    "composite": true,
     "skipLibCheck": true,
     "outDir": "dist-electron",
     "rootDir": "electron",
     "resolveJsonModule": true
   },
-  "include": ["electron/**/*"],
-  "references": [
-    { "path": "../../packages/core" },
-    { "path": "../../packages/eventbus" },
-    { "path": "../../packages/agent-runtime" },
-    { "path": "../../packages/voice" },
-    { "path": "../../packages/memory" },
-    { "path": "../../packages/team" }
-  ]
+  "include": ["electron/**/*"]
 }
