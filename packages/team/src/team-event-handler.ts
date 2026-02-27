@@ -48,7 +48,9 @@ export class TeamEventHandler {
     this.unsubscribers.push(
       this.eventBus.on(Events.AGENT_RESPONSE_COMPLETE, (payload: unknown) => {
         const p = payload as { agentId: string };
-        this.statsStore.recordExecution(p.agentId, 0, true).catch(() => {});
+        this.statsStore.recordExecution(p.agentId, 0, true).catch((err) => {
+          log.warn('Failed to record execution stats', err, p.agentId);
+        });
       }),
     );
   }
@@ -150,7 +152,9 @@ export class TeamEventHandler {
       const msg = success
         ? `**${agentName}** completed: ${fullTask?.title ?? 'Task'}\n\n${summary}`
         : `**${agentName}** failed: ${fullTask?.title ?? 'Task'}\n\n${fullTask?.error ?? 'Unknown error'}`;
-      this.broadcastToTeamFeed(task.assignedTo, msg).catch(() => {});
+      this.broadcastToTeamFeed(task.assignedTo, msg).catch((err) => {
+        log.warn('Failed to broadcast to team feed', err);
+      });
     }
 
     // Reply result to sender's inbox (agent-delegated tasks only, not result notifications)

@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { homedir } from 'node:os';
 import type {
   IAgentRuntime,
   SpawnConfig,
@@ -28,7 +29,15 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
   // --- IAgentRuntime interface (subclasses implement) ---
   abstract buildSpawnConfig(profile: AgentProfile): SpawnConfig;
   abstract parseOutput(raw: string): AgentOutput;
-  abstract formatInput(text: string, context?: InputContext): string;
+
+  /** Format input text with optional shared context. Override for runtime-specific formatting. */
+  formatInput(text: string, context?: InputContext): string {
+    let input = text;
+    if (context?.sharedContext) {
+      input = `[Context from other agents: ${context.sharedContext}]\n\n${input}`;
+    }
+    return input;
+  }
 
   // --- Template method hooks ---
 
@@ -49,8 +58,12 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
 
   /** Write input to the child process. Override for CLI-arg runtimes (e.g., Codex). */
   protected writeInput(child: ChildProcess, _profile: AgentProfile, text: string): void {
-    child.stdin!.write(text);
-    child.stdin!.end();
+    if (!child.stdin) {
+      log.warn('stdin not available, skipping input write');
+      return;
+    }
+    child.stdin.write(text);
+    child.stdin.end();
   }
 
   /**
@@ -74,7 +87,7 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
     const command = this.getCommand();
     const args = this.buildExecuteArgs(profile, options, text);
     const env = buildCleanEnv({ ...this.buildExecuteEnv(profile, options), ...options?.env });
-    const cwd = options?.cwd ?? profile.cwd ?? process.env.HOME ?? '/';
+    const cwd = options?.cwd ?? profile.cwd ?? homedir();
 
     log.info(`Executing: ${command} ${args.join(' ').slice(0, 80)}`, undefined, profile.id);
 

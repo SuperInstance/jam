@@ -34,3 +34,9 @@ audio-cache/
 
 # Test coverage
 coverage/
+
+# Local config (may contain user preferences)
+config.json
+
+# Accidental folders
+undefined/

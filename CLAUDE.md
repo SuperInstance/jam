@@ -9,6 +9,7 @@ Yarn 4 monorepo with the following packages:
 - `packages/agent-runtime` (@jam/agent-runtime) - PTY management, agent lifecycle, runtimes
 - `packages/voice` (@jam/voice) - STT/TTS providers, command parser, voice service
 - `packages/memory` (@jam/memory) - File-based agent memory + session persistence
+- `packages/team` (@jam/team) - Task scheduling, soul management, team coordination, self-improvement engine
 - `apps/desktop` (@jam/desktop) - Electron + React desktop app
 
 ### Desktop App Structure
@@ -56,6 +57,23 @@ packages/agent-runtime/src/runtimes/
 └── codex-cli.ts           # extends BaseAgentRuntime (Throttled, CLI-arg input)
 ```
 
+### Team Package Structure
+
+```
+packages/team/src/
+├── stores/                  # File-based persistence stores
+│   ├── file-task-store.ts         # Task assignments
+│   ├── file-schedule-store.ts     # Scheduled tasks
+│   ├── file-communication-hub.ts  # Inter-agent messaging
+│   ├── file-relationship-store.ts # Agent relationships
+│   └── file-stats-store.ts        # Statistics
+├── soul-manager.ts          # SOUL.md personality management
+├── task-scheduler.ts        # Cron-based task scheduling
+├── task-assigner.ts         # Smart task distribution
+├── self-improvement-engine.ts  # Agent self-reflection
+└── team-executor.ts         # Multi-agent coordination
+```
+
 ## Principles
 
 - **SRP** — each IPC handler module owns one domain (agents, voice, chat, etc.)
@@ -72,7 +90,11 @@ packages/agent-runtime/src/runtimes/
 - `yarn dev` - Start desktop app in dev mode
 - `yarn build` - Build all packages
 - `yarn typecheck` - Type check all packages
+- `yarn test` - Run all tests
+- `yarn test:watch` - Run tests in watch mode
+- `yarn test:coverage` - Run tests with coverage report
 - `yarn workspace @jam/desktop electron:dev` - Start Electron dev server
+- `yarn workspace @jam/<package> test` - Run tests for a specific package
 
 ## Slash Commands
 

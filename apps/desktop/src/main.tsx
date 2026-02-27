@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './index.css';
-import '@xterm/xterm/css/xterm.css';
+// Note: xterm.css is loaded dynamically via LazyTerminal when needed
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

@@ -443,6 +443,13 @@ export class AgentManager {
     this.abortControllers.delete(agentId);
     this.recordTokenUsage(agentId, result);
 
+    // Guard against undefined result (shouldn't happen but be defensive)
+    if (!result) {
+      this.taskTracker.completeTask(agentId, 'failed');
+      this.updateVisualState(agentId, state.status === 'running' ? 'idle' : 'offline');
+      return { success: false, error: 'Runtime returned no result' };
+    }
+
     if (!result.success) {
       this.taskTracker.completeTask(agentId, 'failed');
       this.eventBus.emit('agent:executeOutput', {
@@ -473,12 +480,12 @@ export class AgentManager {
       const userTs = new Date().toISOString();
       this.contextBuilder.recordConversation(state.profile.cwd, {
         timestamp: userTs, role: 'user', content: text, source, ...(hidden && { hidden: true }),
-      }).catch((err) => log.warn(`Fire-and-forget failed: ${String(err)}`));
+      }).catch((err) => log.warn('Failed to record user conversation', err, agentId));
       if (result.text) {
         const agentTs = new Date(Date.now() + 1).toISOString();
         this.contextBuilder.recordConversation(state.profile.cwd, {
           timestamp: agentTs, role: 'agent', content: result.text, source, ...(hidden && { hidden: true }),
-        }).catch((err) => log.warn(`Fire-and-forget failed: ${String(err)}`));
+        }).catch((err) => log.warn('Failed to record agent conversation', err, agentId));
       }
     }
 
@@ -559,12 +566,12 @@ export class AgentManager {
         const userTs = new Date().toISOString();
         this.contextBuilder.recordConversation(state.profile.cwd, {
           timestamp: userTs, role: 'user', content: text, source: 'text', hidden: true,
-        }).catch((err) => log.warn(`Fire-and-forget failed: ${String(err)}`));
+        }).catch((err) => log.warn('Failed to record detached user conversation', err, agentId));
         if (result.text) {
           const agentTs = new Date(Date.now() + 1).toISOString();
           this.contextBuilder.recordConversation(state.profile.cwd, {
             timestamp: agentTs, role: 'agent', content: result.text, source: 'text', hidden: true,
-          }).catch((err) => log.warn(`Fire-and-forget failed: ${String(err)}`));
+          }).catch((err) => log.warn('Failed to record detached agent conversation', err, agentId));
         }
       }
 

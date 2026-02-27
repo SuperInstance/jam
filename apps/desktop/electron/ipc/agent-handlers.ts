@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import { homedir } from 'node:os';
 import type { AgentManager, RuntimeRegistry } from '@jam/agent-runtime';
 
 /** Narrow dependency interface — only what agent handlers need */
@@ -11,7 +12,8 @@ export interface AgentHandlerDeps {
 export function ensureClaudePermissionAccepted(): void {
   try {
     const fs = require('node:fs');
-    const settingsPath = `${process.env.HOME}/.claude/settings.json`;
+    const home = homedir();
+    const settingsPath = `${home}/.claude/settings.json`;
     let settings: Record<string, unknown> = {};
     try {
       settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
@@ -20,7 +22,7 @@ export function ensureClaudePermissionAccepted(): void {
     }
     if (!settings.skipDangerousModePermissionPrompt) {
       settings.skipDangerousModePermissionPrompt = true;
-      const dir = `${process.env.HOME}/.claude`;
+      const dir = `${home}/.claude`;
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
     }

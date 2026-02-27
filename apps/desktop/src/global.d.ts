@@ -98,6 +98,12 @@ export interface JamAPI {
     onTTSAudio: (
       callback: (data: { agentId: string; audioData: string }) => void,
     ) => () => void;
+    onTTSAudioChunk: (
+      callback: (data: { agentId: string; audioData: string; isFirstChunk: boolean; isComplete: boolean }) => void,
+    ) => () => void;
+    onTTSAudioComplete: (
+      callback: (data: { agentId: string }) => void,
+    ) => () => void;
     onStateChange: (
       callback: (data: { state: string }) => void,
     ) => () => void;

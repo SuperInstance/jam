@@ -319,7 +319,9 @@ export class ServiceRegistry {
         logFile,
         startedAt: entry.startedAt,
       });
-      writeFile(servicesFile, line + '\n', { flag: 'a' }).catch(() => {});
+      writeFile(servicesFile, line + '\n', { flag: 'a' }).catch((err) => {
+        log.warn(`Failed to append to services file: ${servicesFile}`, err);
+      });
 
       return { success: true };
     } catch (err) {

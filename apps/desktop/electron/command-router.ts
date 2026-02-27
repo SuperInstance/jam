@@ -2,6 +2,8 @@ import type { AgentManager } from '@jam/agent-runtime';
 import type { CommandParser, ParsedCommand } from '@jam/voice';
 import type { VoiceService } from '@jam/voice';
 import { createLogger } from '@jam/core';
+import { buildAgentPayload, type AgentInfoPayload } from './utils/payload-builder.js';
+import { IntentClassifier, type IntentClassification } from './intent-classifier.js';
 
 const log = createLogger('CommandRouter');
 
@@ -15,12 +17,8 @@ export interface CommandResult {
   agentColor?: string;
 }
 
-export interface AgentInfo {
-  agentId: string;
-  agentName: string;
-  agentRuntime: string;
-  agentColor: string;
-}
+// Re-export AgentInfoPayload as AgentInfo for backwards compatibility
+export type AgentInfo = AgentInfoPayload;
 
 type CommandHandler = (agentId: string, parsed: ParsedCommand) => CommandResult | Promise<CommandResult>;
 
@@ -34,12 +32,17 @@ export class CommandRouter {
   private commandHandlers = new Map<string, CommandHandler>();
   /** Per-agent guard preventing duplicate in-flight voice commands */
   readonly commandsInFlight = new Set<string>();
+  /** Intent classifier for smart agent routing */
+  readonly intentClassifier: IntentClassifier;
 
   constructor(
     private agentManager: AgentManager,
     private commandParser: CommandParser,
     private voiceService: VoiceService | null,
   ) {
+    // Initialize intent classifier
+    this.intentClassifier = new IntentClassifier();
+
     // Register built-in command handlers
     this.registerCommand('status-query', (agentId) => this.handleStatusQuery(agentId));
     this.registerCommand('interrupt', (agentId) => this.handleInterrupt(agentId));
@@ -54,6 +57,14 @@ export class CommandRouter {
   dispatch(agentId: string, parsed: ParsedCommand): CommandResult | Promise<CommandResult> | null {
     const handler = this.commandHandlers.get(parsed.commandType);
     return handler ? handler(agentId, parsed) : null;
+  }
+
+  /**
+   * Classify the intent of a command string.
+   * Returns the intent type with confidence score and matched patterns.
+   */
+  classifyIntent(command: string): IntentClassification {
+    return this.intentClassifier.classify(command);
   }
 
   updateVoiceService(service: VoiceService | null): void {
@@ -109,6 +120,51 @@ export class CommandRouter {
     return targetId;
   }
 
+  /**
+   * Resolve the target agent using intent-based routing.
+   * This method uses the intent classifier to select the best agent based on command type.
+   *
+   * Note: For true intent-based routing, agents would need a 'capabilities' or 'tags' field
+   * in their profile. For now, this provides the classification that can be used by the
+   * caller to make routing decisions.
+   *
+   * @param commandText - The raw command text to classify
+   * @param source - Whether this is from 'voice' or 'text'
+   * @returns Object with target agent ID (if found) and intent classification
+   */
+  resolveTargetByIntent(
+    commandText: string,
+    source: 'voice' | 'text'
+  ): { targetId?: string; intent: IntentClassification } {
+    // Classify the intent
+    const intent = this.classifyIntent(commandText);
+
+    // Get all running non-system agents
+    const runningAgents = this.agentManager.list()
+      .filter((a) => a.status === 'running' && !a.profile.isSystem);
+
+    // TODO: When agents have capabilities/tags, we can match intent to agent capabilities
+    // For now, we'll return the intent classification for the caller to use
+    //
+    // Future implementation:
+    // const matchedAgent = runningAgents.find(agent =>
+    //   agent.profile.capabilities?.includes(intent.type)
+    // );
+
+    // Fall back to existing resolveTarget logic
+    const targetId = this.resolveTarget(
+      { commandType: 'task', text: commandText },
+      source
+    );
+
+    log.debug(
+      `Intent-based routing: intent=${intent.type} confidence=${intent.confidence.toFixed(2)} ` +
+      `target=${targetId || 'none'}`
+    );
+
+    return { targetId, intent };
+  }
+
   /** Get metadata about the running agents (for error messages) */
   getRunningAgentNames(): string[] {
     return this.agentManager.list()
@@ -125,12 +181,7 @@ export class CommandRouter {
   getAgentInfo(agentId: string): AgentInfo | null {
     const agent = this.agentManager.get(agentId);
     if (!agent) return null;
-    return {
-      agentId,
-      agentName: agent.profile.name,
-      agentRuntime: agent.profile.runtime,
-      agentColor: agent.profile.color ?? '#6b7280',
-    };
+    return buildAgentPayload(agent);
   }
 
   /** Handle status query — read from task tracker, never disturb the agent */

@@ -139,7 +139,8 @@ export class AgentContextBuilder {
       // Exclude hidden entries (e.g. task trigger prompts) from UI history
       let filtered = allEntries.filter(e => !e.hidden);
       if (options.before) {
-        filtered = allEntries.filter(e => e.timestamp < options.before!);
+        const before = options.before;
+        filtered = filtered.filter(e => e.timestamp < before);
       }
 
       // Take the last `limit` entries (most recent ones before cursor)

@@ -1,4 +1,8 @@
-import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
+/**
+ * Window API types for renderer process.
+ * Re-exports the JamAPI interface from preload for TypeScript support in src/.
+ */
+
 import type {
   StatsEntry,
   RelationshipEntry,
@@ -8,17 +12,7 @@ import type {
   TaskEntry,
   ScheduleEntry,
   ImprovementEntry,
-} from '../src/types/ipc-types';
-
-// Helper to create event listener with cleanup (from whatsapp-relay pattern)
-function createEventListener<T>(
-  channel: string,
-  callback: (data: T) => void,
-): () => void {
-  const listener = (_event: IpcRendererEvent, data: T) => callback(data);
-  ipcRenderer.on(channel, listener);
-  return () => ipcRenderer.removeListener(channel, listener);
-}
+} from './ipc-types';
 
 export interface JamAPI {
   runtimes: {
@@ -120,6 +114,12 @@ export interface JamAPI {
     onTTSAudio: (
       callback: (data: { agentId: string; audioData: string }) => void,
     ) => () => void;
+    onTTSAudioChunk: (
+      callback: (data: { agentId: string; audioData: string; isFirstChunk: boolean; isComplete: boolean }) => void,
+    ) => () => void;
+    onTTSAudioComplete: (
+      callback: (data: { agentId: string }) => void,
+    ) => () => void;
     onStateChange: (
       callback: (data: { state: string }) => void,
     ) => () => void;
@@ -196,61 +196,35 @@ export interface JamAPI {
       callback: (error: { message: string; details?: string }) => void,
     ) => () => void;
     getVersion: () => Promise<string>;
-    onSandboxProgress: (
-      callback: (data: { status: string; message: string }) => void,
-    ) => () => void;
   };
 
   logs: {
     get: () => Promise<
       Array<{ timestamp: string; level: string; message: string; agentId?: string }>
     >;
-    onBatch: (
-      callback: (entries: Array<{
+    onEntry: (
+      callback: (entry: {
         timestamp: string;
         level: string;
         message: string;
         agentId?: string;
-      }>) => void,
+      }) => void,
     ) => () => void;
   };
 
   services: {
     list: () => Promise<Array<{
       agentId: string;
-      port: number;
+      pid: number;
+      port?: number;
       name: string;
       logFile?: string;
       startedAt: string;
       alive?: boolean;
-      command?: string;
-      cwd?: string;
     }>>;
-    listForAgent: (agentId: string) => Promise<Array<{
-      agentId: string;
-      port: number;
-      name: string;
-      logFile?: string;
-      startedAt: string;
-      alive?: boolean;
-      command?: string;
-      cwd?: string;
-    }>>;
-    stop: (port: number) => Promise<{ success: boolean }>;
-    restart: (serviceName: string) => Promise<{ success: boolean; error?: string }>;
+    stop: (pid: number) => Promise<{ success: boolean }>;
+    restart: (serviceName: string) => Promise<{ success: boolean; pid?: number; error?: string }>;
     openUrl: (port: number) => Promise<{ success: boolean }>;
-    onChanged: (
-      callback: (services: Array<{
-        agentId: string;
-        port: number;
-        name: string;
-        logFile?: string;
-        startedAt: string;
-        alive?: boolean;
-        command?: string;
-        cwd?: string;
-      }>) => void,
-    ) => () => void;
   };
 
   chat: {
@@ -323,6 +297,15 @@ export interface JamAPI {
         agentColor: string;
         queuePosition: number;
         command: string;
+      }) => void,
+    ) => () => void;
+    onSystemNotification: (
+      callback: (data: {
+        taskId: string;
+        agentId: string;
+        title: string;
+        success: boolean;
+        summary?: string;
       }) => void,
     ) => () => void;
   };
@@ -434,204 +417,10 @@ export interface JamAPI {
   };
 }
 
-contextBridge.exposeInMainWorld('jam', {
-  runtimes: {
-    listMetadata: () => ipcRenderer.invoke('runtimes:listMetadata'),
-  },
-
-  agents: {
-    create: (profile) => ipcRenderer.invoke('agents:create', profile),
-    update: (agentId, updates) =>
-      ipcRenderer.invoke('agents:update', agentId, updates),
-    delete: (agentId) => ipcRenderer.invoke('agents:delete', agentId),
-    list: () => ipcRenderer.invoke('agents:list'),
-    get: (agentId) => ipcRenderer.invoke('agents:get', agentId),
-    start: (agentId) => ipcRenderer.invoke('agents:start', agentId),
-    stop: (agentId) => ipcRenderer.invoke('agents:stop', agentId),
-    restart: (agentId) => ipcRenderer.invoke('agents:restart', agentId),
-    stopAll: () => ipcRenderer.invoke('agents:stopAll'),
-    getTaskStatus: (agentId) => ipcRenderer.invoke('agents:getTaskStatus', agentId),
-    onStatusChange: (cb) =>
-      createEventListener('agents:statusChange', cb),
-    onCreated: (cb) => createEventListener('agents:created', cb),
-    onDeleted: (cb) => createEventListener('agents:deleted', cb),
-    onUpdated: (cb) => createEventListener('agents:updated', cb),
-    onVisualStateChange: (cb) =>
-      createEventListener('agents:visualStateChange', cb),
-  },
-
-  terminal: {
-    write: (agentId, data) =>
-      ipcRenderer.send('terminal:write', agentId, data),
-    resize: (agentId, cols, rows) =>
-      ipcRenderer.send('terminal:resize', agentId, cols, rows),
-    onData: (cb) => createEventListener('terminal:data', cb),
-    onExit: (cb) => createEventListener('terminal:exit', cb),
-    onExecuteOutput: (cb) =>
-      createEventListener('terminal:executeOutput', cb),
-    getScrollback: (agentId) =>
-      ipcRenderer.invoke('terminal:getScrollback', agentId),
-  },
-
-  voice: {
-    sendAudioChunk: (agentId, chunk) =>
-      ipcRenderer.send('voice:audioChunk', agentId, chunk),
-    notifyTTSState: (playing) =>
-      ipcRenderer.send('voice:ttsState', playing),
-    onTranscription: (cb) =>
-      createEventListener('voice:transcription', cb),
-    onTTSAudio: (cb) => createEventListener('voice:ttsAudio', cb),
-    onTTSAudioChunk: (cb) => createEventListener('voice:ttsAudioChunk', cb),
-    onTTSAudioComplete: (cb) => createEventListener('voice:ttsAudioComplete', cb),
-    onStateChange: (cb) => createEventListener('voice:stateChanged', cb),
-    requestTTS: (agentId, text) =>
-      ipcRenderer.invoke('voice:requestTTS', agentId, text),
-    getFilterSettings: () =>
-      ipcRenderer.invoke('voice:getFilterSettings'),
-    checkMicPermission: () =>
-      ipcRenderer.invoke('voice:checkMicPermission'),
-  },
-
-  memory: {
-    load: (agentId) => ipcRenderer.invoke('memory:load', agentId),
-    save: (agentId, memory) =>
-      ipcRenderer.invoke('memory:save', agentId, memory),
-  },
-
-  config: {
-    get: () => ipcRenderer.invoke('config:get'),
-    set: (config) => ipcRenderer.invoke('config:set', config),
-  },
-
-  apiKeys: {
-    set: (service, key) => ipcRenderer.invoke('apiKeys:set', service, key),
-    has: (service) => ipcRenderer.invoke('apiKeys:has', service),
-    delete: (service) => ipcRenderer.invoke('apiKeys:delete', service),
-  },
-
-  secrets: {
-    list: () => ipcRenderer.invoke('secrets:list'),
-    set: (id, name, type, value) => ipcRenderer.invoke('secrets:set', id, name, type, value),
-    delete: (id) => ipcRenderer.invoke('secrets:delete', id),
-  },
-
-  window: {
-    minimize: () => ipcRenderer.invoke('window:minimize'),
-    close: () => ipcRenderer.invoke('window:close'),
-    maximize: () => ipcRenderer.invoke('window:maximize'),
-    setCompact: (compact: boolean) => ipcRenderer.invoke('window:setCompact', compact),
-  },
-
-  setup: {
-    detectRuntimes: () => ipcRenderer.invoke('setup:detectRuntimes'),
-    getOnboardingStatus: () => ipcRenderer.invoke('setup:getOnboardingStatus'),
-    getSetupStatus: () => ipcRenderer.invoke('setup:getSetupStatus'),
-    completeOnboarding: () => ipcRenderer.invoke('setup:completeOnboarding'),
-    resetOnboarding: () => ipcRenderer.invoke('setup:resetOnboarding'),
-    openTerminal: (command: string) => ipcRenderer.invoke('setup:openTerminal', command),
-    testRuntime: (runtimeId: string) => ipcRenderer.invoke('setup:testRuntime', runtimeId),
-  },
-
-  app: {
-    onError: (cb) => createEventListener('app:error', cb),
-    getVersion: () => ipcRenderer.invoke('app:getVersion'),
-    onSandboxProgress: (cb) => createEventListener('sandbox:progress', cb),
-  },
-
-  logs: {
-    get: () => ipcRenderer.invoke('logs:get'),
-    onBatch: (cb: (entries: Array<{ timestamp: string; level: string; message: string; agentId?: string }>) => void) =>
-      createEventListener('logs:batch', cb),
-  },
-
-  services: {
-    list: () => ipcRenderer.invoke('services:list'),
-    listForAgent: (agentId) => ipcRenderer.invoke('services:listForAgent', agentId),
-    stop: (port) => ipcRenderer.invoke('services:stop', port),
-    restart: (serviceName) => ipcRenderer.invoke('services:restart', serviceName),
-    openUrl: (port) => ipcRenderer.invoke('services:openUrl', port),
-    onChanged: (cb: (services: Array<{
-      agentId: string;
-      port: number;
-      name: string;
-      logFile?: string;
-      startedAt: string;
-      alive?: boolean;
-      command?: string;
-      cwd?: string;
-    }>) => void) => createEventListener('services:changed', cb),
-  },
-
-  chat: {
-    sendCommand: (text) => ipcRenderer.invoke('chat:sendCommand', text),
-    interruptAgent: (agentId) => ipcRenderer.invoke('chat:interruptAgent', agentId),
-    loadHistory: (options) => ipcRenderer.invoke('chat:loadHistory', options),
-    onAgentAcknowledged: (cb) => createEventListener('chat:agentAcknowledged', cb),
-    onAgentResponse: (cb) => createEventListener('chat:agentResponse', cb),
-    onVoiceCommand: (cb) => createEventListener('chat:voiceCommand', cb),
-    onAgentProgress: (cb) => createEventListener('chat:agentProgress', cb),
-    onMessageQueued: (cb) => createEventListener('chat:messageQueued', cb),
-    onSystemNotification: (cb) => createEventListener('chat:systemNotification', cb),
-  },
-
-  tasks: {
-    list: (filter) => ipcRenderer.invoke('tasks:list', filter),
-    get: (taskId) => ipcRenderer.invoke('tasks:get', taskId),
-    create: (input) => ipcRenderer.invoke('tasks:create', input),
-    update: (taskId, updates) => ipcRenderer.invoke('tasks:update', taskId, updates),
-    delete: (taskId) => ipcRenderer.invoke('tasks:delete', taskId),
-    cancel: (taskId) => ipcRenderer.invoke('tasks:cancel', taskId),
-    createRecurring: (input) => ipcRenderer.invoke('tasks:createRecurring', input),
-    onCreated: (cb) => createEventListener('tasks:created', cb),
-    onUpdated: (cb) => createEventListener('tasks:updated', cb),
-    onCompleted: (cb) => createEventListener('tasks:completed', cb),
-  },
-
-  team: {
-    channels: {
-      list: (agentId) => ipcRenderer.invoke('channels:list', agentId),
-      create: (name, type, participants) =>
-        ipcRenderer.invoke('channels:create', name, type, participants),
-      getMessages: (channelId, limit, before) =>
-        ipcRenderer.invoke('channels:getMessages', channelId, limit, before),
-      sendMessage: (channelId, senderId, content, replyTo) =>
-        ipcRenderer.invoke('channels:sendMessage', channelId, senderId, content, replyTo),
-      onMessageReceived: (cb) => createEventListener('message:received', cb),
-    },
-    relationships: {
-      get: (sourceAgentId, targetAgentId) =>
-        ipcRenderer.invoke('relationships:get', sourceAgentId, targetAgentId),
-      getAll: (agentId) => ipcRenderer.invoke('relationships:getAll', agentId),
-      onTrustUpdated: (cb) => createEventListener('trust:updated', cb),
-    },
-    stats: {
-      get: (agentId) => ipcRenderer.invoke('stats:get', agentId),
-      onUpdated: (cb) => createEventListener('stats:updated', cb),
-    },
-    soul: {
-      get: (agentId) => ipcRenderer.invoke('soul:get', agentId),
-      evolve: (agentId) => ipcRenderer.invoke('soul:evolve', agentId),
-      onEvolved: (cb) => createEventListener('soul:evolved', cb),
-    },
-    schedules: {
-      list: () => ipcRenderer.invoke('schedules:list'),
-      create: (schedule) => ipcRenderer.invoke('schedules:create', schedule),
-      update: (id, updates) => ipcRenderer.invoke('schedules:update', id, updates),
-      delete: (id) => ipcRenderer.invoke('schedules:delete', id),
-    },
-    improvements: {
-      list: (filter) => ipcRenderer.invoke('improvements:list', filter),
-      propose: (agentId, title, description) =>
-        ipcRenderer.invoke('improvements:propose', agentId, title, description),
-      execute: (improvementId) => ipcRenderer.invoke('improvements:execute', improvementId),
-      rollback: (improvementId) => ipcRenderer.invoke('improvements:rollback', improvementId),
-      health: () => ipcRenderer.invoke('improvements:health'),
-    },
-  },
-} as JamAPI);
-
 declare global {
   interface Window {
     jam: JamAPI;
   }
 }
+
+export {};

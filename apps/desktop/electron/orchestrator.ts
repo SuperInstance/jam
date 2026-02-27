@@ -60,24 +60,16 @@ import {
 import type { ITeamExecutor } from '@jam/team';
 import { AppStore } from './storage/store';
 import { loadConfig, type JamConfig, type STTProviderType, type TTSProviderType } from './config';
+import { buildAgentPayloadWith } from './utils/payload-builder.js';
+import {
+  pickDeathPhrase,
+  getProgressPhrase,
+  stripMarkdownForTTS,
+  isSuitableForTTS,
+  truncateForTTS,
+} from './utils/tts-helper.js';
 
 const log = createLogger('Orchestrator');
-
-const DEATH_PHRASES = [
-  '{name} has left the building. Permanently.',
-  '{name} just rage-quit. Classic.',
-  'Uh oh. {name} is taking an unscheduled nap.',
-  '{name} has entered the shadow realm.',
-  'Well... {name} is no more. Rest in pixels.',
-  '{name} has crashed. Sending thoughts and prayers.',
-  'Plot twist: {name} is dead.',
-  '{name} just spontaneously combusted. Awkward.',
-];
-
-function pickDeathPhrase(name: string): string {
-  const phrase = DEATH_PHRASES[Math.floor(Math.random() * DEATH_PHRASES.length)];
-  return phrase.replace(/{name}/g, name);
-}
 
 export class Orchestrator {
   readonly eventBus: EventBus;
@@ -482,7 +474,9 @@ export class Orchestrator {
   /** Rebuild the team communication skill file when agents change */
   private refreshTeamSkill(): void {
     const teamSkillPath = join(this.sharedSkillsDir, 'team-communication.md');
-    writeFile(teamSkillPath, this.buildTeamCommunicationSkill(), 'utf-8').catch(() => {});
+    writeFile(teamSkillPath, this.buildTeamCommunicationSkill(), 'utf-8').catch((err) => {
+      log.warn(`Failed to write team skill file: ${teamSkillPath}`, err);
+    });
   }
 
   /** Build the team communication skill with the current agent roster */
@@ -841,7 +835,7 @@ export class Orchestrator {
 
   /** Core TTS pipeline: synthesize text → read file → base64 → send to renderer.
    *  Used by all TTS callers (ack, progress, death, response complete, status messages). */
-  async speakToRenderer(agentId: string, text: string): Promise<void> {
+  async speakToRenderer(agentId: string, text: string, useStreaming = true): Promise<void> {
     if (!this.voiceService) return;
 
     const agent = this.agentManager.get(agentId);
@@ -853,15 +847,59 @@ export class Orchestrator {
     try {
       const voiceId = this.resolveVoiceId(agent);
       const speed = agent.profile.voice.speed ?? this.config.ttsSpeed ?? 1.0;
-      const audioPath = await this.voiceService.synthesize(text, voiceId, agentId, { speed });
-      const audioBuffer = await readFile(audioPath);
-      this.sendToRenderer('voice:ttsAudio', {
-        agentId,
-        audioData: `data:audio/mpeg;base64,${audioBuffer.toString('base64')}`,
-      });
+
+      // Use streaming for lower latency (default), but fall back for short phrases
+      if (useStreaming && text.length > 50) {
+        await this.streamToRenderer(agentId, text, voiceId, speed);
+      } else {
+        // Non-streaming fallback for short phrases or when streaming is disabled
+        const audioPath = await this.voiceService.synthesize(text, voiceId, agentId, { speed });
+        const audioBuffer = await readFile(audioPath);
+        this.sendToRenderer('voice:ttsAudio', {
+          agentId,
+          audioData: `data:audio/mpeg;base64,${audioBuffer.toString('base64')}`,
+        });
+      }
     } catch (error) {
       log.error(`TTS failed: ${String(error)}`, undefined, agentId);
     }
+  }
+
+  /** Stream TTS audio chunks to the renderer for lower latency playback */
+  private async streamToRenderer(
+    agentId: string,
+    text: string,
+    voiceId: string,
+    speed: number,
+  ): Promise<void> {
+    if (!this.voiceService) return;
+
+    let isFirstChunk = true;
+
+    await this.voiceService.synthesizeStream(
+      text,
+      voiceId,
+      agentId,
+      (chunk, isComplete) => {
+        if (isComplete) {
+          // Send completion signal
+          this.sendToRenderer('voice:ttsAudioComplete', { agentId });
+          return;
+        }
+
+        // Send each chunk as base64-encoded data URL
+        const audioData = `data:audio/mpeg;base64,${chunk.toString('base64')}`;
+        this.sendToRenderer('voice:ttsAudioChunk', {
+          agentId,
+          audioData,
+          isFirstChunk,
+          isComplete: false,
+        });
+
+        isFirstChunk = false;
+      },
+      { speed },
+    );
   }
 
   /** Speak a short acknowledgment phrase */
@@ -870,22 +908,9 @@ export class Orchestrator {
     await this.speakToRenderer(agentId, ackText);
   }
 
-  /** Data-driven tool-use → TTS phrase mappings (OCP: add entries to extend) */
-  private readonly progressPhrases: Array<{ pattern: RegExp; phrase: string }> = [
-    { pattern: /bash|command|shell/i, phrase: 'Running a command.' },
-    { pattern: /write|edit|create/i, phrase: 'Writing some code.' },
-    { pattern: /read|glob|search|grep/i, phrase: 'Reading files.' },
-    { pattern: /web|fetch|browse/i, phrase: 'Searching the web.' },
-    { pattern: /test|spec|assert/i, phrase: 'Running tests.' },
-  ];
-
   /** Speak a short progress update for long-running tasks */
   private async speakProgress(agentId: string, type: string, summary: string): Promise<void> {
-    let phrase = 'Still thinking about it.';
-    if (type === 'tool-use') {
-      const match = this.progressPhrases.find(p => p.pattern.test(summary));
-      phrase = match?.phrase ?? 'Still working on it.';
-    }
+    const phrase = getProgressPhrase(type, summary) ?? 'Still working on it.';
     log.debug(`TTS progress: "${phrase}"`, undefined, agentId);
     await this.speakToRenderer(agentId, phrase);
   }
@@ -898,43 +923,22 @@ export class Orchestrator {
 
     log.info(`Agent death notification: "${deathPhrase}"`, undefined, agentId);
 
-    this.sendToRenderer('chat:agentAcknowledged', {
-      agentId,
-      agentName: name,
-      agentRuntime: agent?.profile.runtime ?? '',
-      agentColor: agent?.profile.color ?? '#6b7280',
+    this.sendToRenderer('chat:agentAcknowledged', buildAgentPayloadWith(agent, {
       ackText: deathPhrase,
-    });
+    }));
 
     await this.speakToRenderer(agentId, deathPhrase);
-  }
-
-  /** Strip markdown formatting so TTS reads natural text, not syntax */
-  private stripMarkdownForTTS(text: string): string {
-    return text
-      .replace(/```[\s\S]*?```/g, ' (code block omitted) ')
-      .replace(/`([^`]+)`/g, '$1')
-      .replace(/^#{1,6}\s+/gm, '')
-      .replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1')
-      .replace(/_{1,3}([^_]+)_{1,3}/g, '$1')
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-      .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
-      .replace(/^[-*_]{3,}\s*$/gm, '')
-      .replace(/^\s*[-*+]\s+/gm, '')
-      .replace(/^\s*\d+\.\s+/gm, '')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
   }
 
   /** Synthesize TTS audio from a completed agent response and send to renderer */
   private async handleResponseComplete(agentId: string, responseText: string): Promise<void> {
     if (!this.voiceService) return;
-    if (!responseText || responseText.length < 10) {
+    if (!isSuitableForTTS(responseText)) {
       log.debug(`Skipping TTS: output too short (${responseText.length} chars)`, undefined, agentId);
       return;
     }
 
-    let text = this.stripMarkdownForTTS(responseText);
+    const text = stripMarkdownForTTS(responseText);
     if (text.length > 1500) text = text.slice(0, 1500) + '...';
 
     log.info(`Synthesizing TTS (${text.length} chars)`, undefined, agentId);

@@ -13,8 +13,17 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
+    "composite": true,
     "outDir": "dist",
-    "rootDir": "src"
+    "baseUrl": ".",
+    "paths": {
+      "@jam/core": ["./packages/core/src"],
+      "@jam/eventbus": ["./packages/eventbus/src"],
+      "@jam/agent-runtime": ["./packages/agent-runtime/src"],
+      "@jam/voice": ["./packages/voice/src"],
+      "@jam/memory": ["./packages/memory/src"],
+      "@jam/team": ["./packages/team/src"]
+    }
   },
   "exclude": ["node_modules", "dist"]
 }

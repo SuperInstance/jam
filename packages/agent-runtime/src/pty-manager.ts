@@ -1,5 +1,6 @@
 import type { AgentId } from '@jam/core';
 import { createLogger } from '@jam/core';
+import { homedir } from 'node:os';
 import type * as pty from 'node-pty';
 import treeKill from 'tree-kill';
 import { buildCleanEnv } from './utils.js';
@@ -103,7 +104,7 @@ export class PtyManager implements IPtyManager {
         name: 'xterm-256color',
         cols: options.cols ?? 120,
         rows: options.rows ?? 30,
-        cwd: options.cwd ?? process.env.HOME ?? '/',
+        cwd: options.cwd ?? homedir(),
         env,
       });
 

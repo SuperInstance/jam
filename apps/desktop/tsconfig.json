@@ -21,5 +21,13 @@
     "baseUrl": "."
   },
   "include": ["src"],
-  "references": [{ "path": "./tsconfig.electron.json" }]
+  "references": [
+    { "path": "../../packages/core" },
+    { "path": "../../packages/eventbus" },
+    { "path": "../../packages/agent-runtime" },
+    { "path": "../../packages/voice" },
+    { "path": "../../packages/memory" },
+    { "path": "../../packages/team" },
+    { "path": "./tsconfig.electron.json" }
+  ]
 }

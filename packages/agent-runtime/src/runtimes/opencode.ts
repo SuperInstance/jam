@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import type { ChildProcess } from 'node:child_process';
 import type {
   SpawnConfig,
@@ -11,6 +12,9 @@ import type {
 import { stripAnsiSimple } from '../utils.js';
 import { BaseAgentRuntime } from './base-runtime.js';
 import { ThrottledOutputStrategy } from './output-strategy.js';
+import { createLogger } from '@jam/core';
+
+const log = createLogger('OpenCodeRuntime');
 
 export class OpenCodeRuntime extends BaseAgentRuntime {
   readonly runtimeId = 'opencode';
@@ -29,8 +33,8 @@ export class OpenCodeRuntime extends BaseAgentRuntime {
       { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', group: 'Google' },
       { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', group: 'Google' },
     ],
-    detectAuth(homedir: string): boolean {
-      return existsSync(`${homedir}/.opencode/config.json`);
+    detectAuth(home: string): boolean {
+      return existsSync(`${home}/.opencode/config.json`);
     },
     getAuthHint: () => 'Run "opencode" in your terminal to configure',
   };
@@ -81,11 +85,15 @@ export class OpenCodeRuntime extends BaseAgentRuntime {
 
   /** OpenCode receives system prompt inline via stdin */
   protected writeInput(child: ChildProcess, profile: AgentProfile, text: string): void {
+    if (!child.stdin) {
+      log.warn('stdin not available, skipping input write');
+      return;
+    }
     const stdinText = profile.systemPrompt
       ? `[${profile.systemPrompt}]\n\n${text}`
       : `[You are ${profile.name}. When asked who you are, respond as ${profile.name}.]\n\n${text}`;
-    child.stdin!.write(stdinText);
-    child.stdin!.end();
+    child.stdin.write(stdinText);
+    child.stdin.end();
   }
 
   protected createOutputStrategy() {

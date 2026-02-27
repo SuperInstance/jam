@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { homedir } from 'node:os';
 import { createLogger } from '@jam/core';
 
 const log = createLogger('PathFix');
@@ -24,7 +25,8 @@ function compareVersions(a: [number, number, number], b: [number, number, number
  */
 function fixNvmNodeOrder(): void {
   const fs = require('node:fs') as typeof import('node:fs');
-  const nvmDir = `${process.env.HOME}/.nvm/versions/node`;
+  const home = homedir();
+  const nvmDir = `${home}/.nvm/versions/node`;
 
   try {
     if (!fs.existsSync(nvmDir)) return;
@@ -92,8 +94,8 @@ export function fixPath(): void {
   const extras = [
     '/usr/local/bin',
     '/opt/homebrew/bin',
-    `${process.env.HOME}/.local/bin`,
-    `${process.env.HOME}/.cargo/bin`,
+    `${homedir()}/.local/bin`,
+    `${homedir()}/.cargo/bin`,
     '/opt/homebrew/sbin',
   ];
   const currentPath = process.env.PATH || '';

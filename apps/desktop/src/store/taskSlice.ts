@@ -1,23 +1,11 @@
 import type { StateCreator } from 'zustand';
 import type { AppStore } from './index';
+import { createRecordActionsById } from './helpers';
 
-export interface TaskEntry {
-  id: string;
-  title: string;
-  description: string;
-  status: string;
-  priority: string;
-  source: string;
-  createdBy: string;
-  assignedTo?: string;
-  createdAt: string;
-  startedAt?: string;
-  completedAt?: string;
-  result?: string;
-  error?: string;
-  tags: string[];
-  parentTaskId?: string;
-}
+// Re-export shared type for convenience
+export type { TaskEntry } from '@/types/ipc-types';
+
+import type { TaskEntry } from '@/types/ipc-types';
 
 export interface TaskSlice {
   tasks: Record<string, TaskEntry>;
@@ -35,30 +23,22 @@ export const createTaskSlice: StateCreator<
   [],
   [],
   TaskSlice
-> = (set) => ({
-  tasks: {},
-  taskFilter: {},
+> = (set, get) => {
+  // Use record helper for CRUD operations
+  const actions = createRecordActionsById<TaskEntry>(
+    set,
+    () => get().tasks,
+    'tasks',
+  );
 
-  setTasks: (tasks) =>
-    set({
-      tasks: Object.fromEntries(tasks.map((t) => [t.id, t])),
-    }),
+  return {
+    tasks: {},
+    taskFilter: {},
 
-  addTask: (task) =>
-    set((state) => ({
-      tasks: { ...state.tasks, [task.id]: task },
-    })),
-
-  updateTask: (task) =>
-    set((state) => ({
-      tasks: { ...state.tasks, [task.id]: task },
-    })),
-
-  removeTask: (taskId) =>
-    set((state) => {
-      const { [taskId]: _, ...rest } = state.tasks;
-      return { tasks: rest };
-    }),
-
-  setTaskFilter: (filter) => set({ taskFilter: filter }),
-});
+    setTasks: actions.setAll,
+    addTask: actions.upsert,
+    updateTask: actions.upsert, // Same as add for full replacement
+    removeTask: actions.remove,
+    setTaskFilter: (filter) => set({ taskFilter: filter }),
+  };
+};

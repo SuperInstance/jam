@@ -80,13 +80,7 @@ export class ClaudeCodeRuntime extends BaseAgentRuntime {
     return { type: 'text', content: cleaned.trim(), raw };
   }
 
-  formatInput(text: string, context?: InputContext): string {
-    let input = text;
-    if (context?.sharedContext) {
-      input = `[Context from other agents: ${context.sharedContext}]\n\n${input}`;
-    }
-    return input;
-  }
+  // formatInput: uses base class implementation
 
   // --- Template method hooks ---
 

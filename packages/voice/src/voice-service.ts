@@ -119,4 +119,35 @@ export class VoiceService {
       this.eventBus.emit('voice:stateChanged', { state: 'idle' });
     }
   }
+
+  /**
+   * Stream TTS audio chunks for lower latency playback.
+   * Emits chunks via eventBus as they arrive, allowing playback to start immediately.
+   *
+   * Note: Cached audio is not used for streaming - streaming bypasses cache for speed.
+   */
+  async synthesizeStream(
+    text: string,
+    voiceId: string,
+    agentId: AgentId,
+    onChunk: (chunk: Buffer, isComplete: boolean) => void,
+    options?: TTSOptions,
+  ): Promise<void> {
+    this.eventBus.emit('voice:stateChanged', { state: 'speaking' });
+
+    try {
+      // Check if provider supports streaming
+      if ('synthesizeStream' in this.ttsProvider && typeof this.ttsProvider.synthesizeStream === 'function') {
+        log.debug(`Using streaming TTS for voice ${voiceId}`, undefined, agentId);
+        await this.ttsProvider.synthesizeStream!(text, voiceId, onChunk, options);
+      } else {
+        // Fallback: use non-streaming and emit as a single chunk
+        log.debug(`Provider does not support streaming, using fallback`, undefined, agentId);
+        const audioBuffer = await this.ttsProvider.synthesize(text, voiceId, options);
+        onChunk(audioBuffer, true);
+      }
+    } finally {
+      this.eventBus.emit('voice:stateChanged', { state: 'idle' });
+    }
+  }
 }

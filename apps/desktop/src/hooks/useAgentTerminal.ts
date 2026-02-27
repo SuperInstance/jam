@@ -1,58 +1,77 @@
-import { useEffect, useRef } from 'react';
-import { Terminal } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
+import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '@/store';
+
+// Types for dynamically imported modules
+type TerminalType = typeof import('@xterm/xterm').Terminal;
+type FitAddonType = typeof import('@xterm/addon-fit').FitAddon;
 
 export function useAgentTerminal(agentId: string) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const terminalRef = useRef<Terminal | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
+  const terminalRef = useRef<InstanceType<TerminalType> | null>(null);
+  const fitAddonRef = useRef<InstanceType<FitAddonType> | null>(null);
+  const [isReady, setIsReady] = useState(false);
 
   const pendingData = useAppStore(
     (s) => s.terminalBuffers[agentId]?.pendingData,
   );
   const flushTerminalData = useAppStore((s) => s.flushTerminalData);
 
-  // Initialize terminal + load scrollback history
+  // Initialize terminal + load scrollback history (with dynamic imports)
   useEffect(() => {
     if (!containerRef.current) return;
 
-    const terminal = new Terminal({
-      theme: {
-        background: '#09090b',
-        foreground: '#e6edf3',
-        cursor: '#58a6ff',
-        selectionBackground: '#264f78',
-      },
-      fontSize: 13,
-      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-      cursorBlink: true,
-      scrollback: 5000,
+    let disposed = false;
+
+    // Dynamic import to reduce initial bundle size
+    Promise.all([
+      import('@xterm/xterm'),
+      import('@xterm/addon-fit'),
+    ]).then(([{ Terminal }, { FitAddon }]) => {
+      if (disposed) return;
+
+      const terminal = new Terminal({
+        theme: {
+          background: '#09090b',
+          foreground: '#e6edf3',
+          cursor: '#58a6ff',
+          selectionBackground: '#264f78',
+        },
+        fontSize: 13,
+        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+        cursorBlink: true,
+        scrollback: 5000,
+      });
+
+      const fitAddon = new FitAddon();
+      terminal.loadAddon(fitAddon);
+      terminal.open(containerRef.current!);
+      fitAddon.fit();
+
+      // Forward user input to main process
+      terminal.onData((data) => {
+        window.jam.terminal.write(agentId, data);
+      });
+
+      terminalRef.current = terminal;
+      fitAddonRef.current = fitAddon;
+
+      // Replay scrollback history so the terminal shows past output
+      const scrollback = useAppStore.getState().terminalBuffers[agentId]?.scrollback ?? [];
+      for (const data of scrollback) {
+        terminal.write(data);
+      }
+
+      setIsReady(true);
+    }).catch((err) => {
+      console.error('Failed to load xterm:', err);
     });
-
-    const fitAddon = new FitAddon();
-    terminal.loadAddon(fitAddon);
-    terminal.open(containerRef.current);
-    fitAddon.fit();
-
-    // Forward user input to main process
-    terminal.onData((data) => {
-      window.jam.terminal.write(agentId, data);
-    });
-
-    terminalRef.current = terminal;
-    fitAddonRef.current = fitAddon;
-
-    // Replay scrollback history so the terminal shows past output
-    const scrollback = useAppStore.getState().terminalBuffers[agentId]?.scrollback ?? [];
-    for (const data of scrollback) {
-      terminal.write(data);
-    }
 
     return () => {
-      terminal.dispose();
+      disposed = true;
+      terminalRef.current?.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
+      setIsReady(false);
     };
   }, [agentId]);
 
@@ -83,5 +102,6 @@ export function useAgentTerminal(agentId: string) {
 
   return {
     containerRef,
+    isReady,
   };
 }

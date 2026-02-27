@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
 import { execFileSync } from 'node:child_process';
+import { homedir } from 'node:os';
 import type { RuntimeRegistry } from '@jam/agent-runtime';
 import type { AppStore } from '../storage/store';
 import { ensureClaudePermissionAccepted } from './agent-handlers';
@@ -11,11 +12,46 @@ export interface SetupHandlerDeps {
   initVoice: () => void;
 }
 
+/**
+ * Escape a string for safe use inside AppleScript double-quoted strings.
+ * Escapes backslashes and double quotes.
+ */
+function escapeAppleScript(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/**
+ * Commands allowed to be executed in a terminal.
+ * Only whitelisted base commands are permitted.
+ */
+const ALLOWED_TERMINAL_COMMANDS = [
+  'claude',
+  'claude-code',
+  'opencode',
+  'codex',
+  'cursor-agent',
+  'npm',
+  'yarn',
+  'pnpm',
+  'node',
+  'npx',
+];
+
+/**
+ * Validate that a command starts with an allowed base command.
+ * Returns true if the command is allowed, false otherwise.
+ */
+function isCommandAllowed(command: string): boolean {
+  const trimmed = command.trim();
+  const baseCmd = trimmed.split(/\s+/)[0];
+  return ALLOWED_TERMINAL_COMMANDS.includes(baseCmd);
+}
+
 export function registerSetupHandlers(deps: SetupHandlerDeps): void {
   const { runtimeRegistry, appStore, initVoice } = deps;
 
   ipcMain.handle('setup:detectRuntimes', () => {
-    const homedir = process.env.HOME || '';
+    const home = homedir();
 
     let nodeVersion = '';
     let nodeMajor = 0;
@@ -76,7 +112,7 @@ export function registerSetupHandlers(deps: SetupHandlerDeps): void {
         if (metadata.nodeVersionRequired && nodeMajor > 0 && nodeMajor < metadata.nodeVersionRequired) {
           error = `Requires Node.js ${metadata.nodeVersionRequired}+, but found v${nodeVersion}. Install Node 22+: nvm install 22`;
         }
-        authenticated = metadata.detectAuth(homedir);
+        authenticated = metadata.detectAuth(home);
         authHint = metadata.getAuthHint();
       } else {
         authHint = metadata.installHint;
@@ -105,25 +141,27 @@ export function registerSetupHandlers(deps: SetupHandlerDeps): void {
   });
 
   ipcMain.handle('setup:openTerminal', (_, command: string) => {
-    // Sanitize: only allow simple alphanumeric commands with spaces, dashes, dots, slashes
-    // Prevents shell/AppleScript injection via string interpolation
-    const sanitized = command.replace(/[^a-zA-Z0-9 _./@:-]/g, '');
+    // Validate command against allowlist
+    if (!isCommandAllowed(command)) {
+      return { success: false, error: `Command not allowed: ${command.split(' ')[0]}` };
+    }
+
     try {
       if (process.platform === 'darwin') {
-        // Escape backslashes and double-quotes for AppleScript string context
-        const escaped = sanitized.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const escaped = escapeAppleScript(command);
         execFileSync('osascript', [
           '-e', `tell application "Terminal" to do script "${escaped}"`,
           '-e', 'tell application "Terminal" to activate',
         ], { timeout: 5000 });
       } else if (process.platform === 'linux') {
-        execFileSync('x-terminal-emulator', ['-e', sanitized], { timeout: 5000 });
+        execFileSync('x-terminal-emulator', ['-e', command], { timeout: 5000 });
       } else {
-        execFileSync('cmd', ['/k', sanitized], { timeout: 5000 });
+        execFileSync('cmd', ['/k', command], { timeout: 5000 });
       }
       return { success: true };
-    } catch {
-      return { success: false, error: 'Could not open terminal' };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not open terminal';
+      return { success: false, error: message };
     }
   });
 

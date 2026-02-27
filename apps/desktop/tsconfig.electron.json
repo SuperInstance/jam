@@ -1,4 +1,5 @@
 {
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "target": "ES2020",
     "module": "CommonJS",
@@ -11,5 +12,13 @@
     "rootDir": "electron",
     "resolveJsonModule": true
   },
-  "include": ["electron/**/*"]
+  "include": ["electron/**/*"],
+  "references": [
+    { "path": "../../packages/core" },
+    { "path": "../../packages/eventbus" },
+    { "path": "../../packages/agent-runtime" },
+    { "path": "../../packages/voice" },
+    { "path": "../../packages/memory" },
+    { "path": "../../packages/team" }
+  ]
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { SecretsManager } from '@/components/settings/SecretsManager';
 import {
   type STTProvider,
@@ -45,7 +45,7 @@ const ComboSelect: React.FC<{
   options: Array<{ id: string; label: string }>;
   onChange: (val: string) => void;
   placeholder?: string;
-}> = ({ value, options, onChange, placeholder }) => {
+}> = React.memo(({ value, options, onChange, placeholder }) => {
   const isCustom = value !== '' && !options.some((o) => o.id === value);
   const [showCustom, setShowCustom] = useState(isCustom);
 
@@ -83,7 +83,7 @@ const ComboSelect: React.FC<{
       )}
     </div>
   );
-};
+});
 
 export const SettingsContainer: React.FC<{
   onClose: () => void;
@@ -123,6 +123,25 @@ export const SettingsContainer: React.FC<{
   const [status, setStatus] = useState<string | null>(null);
   const [runtimeOptions, setRuntimeOptions] = useState<Array<{ id: string; displayName: string }>>([]);
 
+  // Debounced status clear - prevent flashing messages
+  useEffect(() => {
+    if (status && !status.startsWith('Error')) {
+      const timer = setTimeout(() => setStatus(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [status]);
+
+  // Memoize computed values
+  const needsOpenai = useMemo(
+    () => config.sttProvider === 'openai' || config.ttsProvider === 'openai',
+    [config.sttProvider, config.ttsProvider]
+  );
+
+  const needsElevenlabs = useMemo(
+    () => config.sttProvider === 'elevenlabs' || config.ttsProvider === 'elevenlabs',
+    [config.sttProvider, config.ttsProvider]
+  );
+
   useEffect(() => {
     window.jam.config.get().then((c) => {
       const loaded = c as unknown as Partial<Config>;
@@ -142,31 +161,26 @@ export const SettingsContainer: React.FC<{
     });
   }, []);
 
-  const needsOpenai =
-    config.sttProvider === 'openai' || config.ttsProvider === 'openai';
-  const needsElevenlabs =
-    config.sttProvider === 'elevenlabs' || config.ttsProvider === 'elevenlabs';
-
   // Reset model/voice to first option when switching providers
-  const handleSTTProviderChange = (provider: STTProvider) => {
+  const handleSTTProviderChange = useCallback((provider: STTProvider) => {
     const models = STT_MODELS[provider];
     setConfig({
       ...config,
       sttProvider: provider,
       sttModel: models[0]?.id ?? '',
     });
-  };
+  }, [config]);
 
-  const handleTTSProviderChange = (provider: TTSProvider) => {
+  const handleTTSProviderChange = useCallback((provider: TTSProvider) => {
     const voices = TTS_VOICES[provider];
     setConfig({
       ...config,
       ttsProvider: provider,
       ttsVoice: voices[0]?.id ?? '',
     });
-  };
+  }, [config]);
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     setSaving(true);
     setStatus(null);
 
@@ -197,14 +211,14 @@ export const SettingsContainer: React.FC<{
     } finally {
       setSaving(false);
     }
-  };
+  }, [openaiKey, elevenlabsKey, config, blocklistText]);
 
-  const handleDeleteKey = async (service: 'openai' | 'elevenlabs') => {
+  const handleDeleteKey = useCallback(async (service: 'openai' | 'elevenlabs') => {
     await window.jam.apiKeys.delete(service);
     if (service === 'openai') setHasOpenai(false);
     else setHasElevenlabs(false);
     setStatus(`${service} key removed.`);
-  };
+  }, []);
 
   return (
     <div className="flex flex-col h-full bg-zinc-900">
