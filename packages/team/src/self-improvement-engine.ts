@@ -1,3 +1,27 @@
+/**
+ * @fileoverview SelfImprovementEngine - Agent self-reflection and autonomous improvement.
+ *
+ * The SelfImprovementEngine enables agents to:
+ * - Reflect on their work patterns and conversation history
+ * - Evolve their soul/persona over time
+ * - Identify proactive tasks they should undertake
+ * - Adjust traits based on evidence from their work
+ *
+ * Design Patterns:
+ * - Dependency Injection: TeamExecutor, conversation loader, and workspace scanner are injected
+ * - Prompt Engineering: buildReflectionPrompt() constructs a detailed LLM prompt
+ * - Result Parsing: LLM JSON output is parsed into structured reflections
+ *
+ * The reflection process:
+ * 1. Gather context (stats, tasks, conversations, soul, workspace)
+ * 2. Build a prompt describing the agent's recent work
+ * 3. Execute the reflection via TeamExecutor
+ * 4. Parse the LLM response (role, learnings, trait adjustments, goals, tasks)
+ * 5. Apply the results (soul evolution + proactive task creation)
+ *
+ * @module team/self-improvement-engine
+ */
+
 import type { ITaskStore, IStatsStore, IEventBus, AgentStats, Task } from '@jam/core';
 import { Events, createLogger } from '@jam/core';
 import type { SoulManager } from './soul-manager.js';
@@ -5,59 +29,145 @@ import type { ITeamExecutor } from './team-executor.js';
 
 const log = createLogger('SelfImprovement');
 
-/** Minimal conversation entry for reflection — no coupling to @jam/agent-runtime */
+/**
+ * Minimal conversation entry for reflection.
+ *
+ * This interface avoids coupling to @jam/agent-runtime by defining
+ * a minimal conversation structure.
+ *
+ * @interface
+ */
 export interface ReflectionConversation {
+  /** ISO timestamp of the message */
   timestamp: string;
+
+  /** Whether the message is from the user or agent */
   role: 'user' | 'agent';
+
+  /** The message content */
   content: string;
 }
 
-/** Callback to load recent conversations for an agent */
+/**
+ * Callback to load recent conversations for an agent.
+ *
+ * @callback ConversationLoader
+ * @param agentId - The agent ID to load conversations for
+ * @param limit - Maximum number of conversations to return
+ * @returns Promise resolving to the conversation history
+ */
 export type ConversationLoader = (agentId: string, limit: number) => Promise<ReflectionConversation[]>;
 
-/** Summary of an agent's workspace directory */
+/**
+ * Summary of an agent's workspace directory.
+ *
+ * @interface
+ */
 export interface WorkspaceSummary {
-  /** Top-level files and directories (name + type) */
+  /** Top-level files and directories */
   entries: Array<{ name: string; type: 'file' | 'dir' }>;
-  /** Services found in .services.json files (including subdirs) */
+
+  /** Services found in .services.json files */
   services: Array<{ name: string; port?: number; alive: boolean }>;
-  /** Notable files content (e.g., README, status docs — truncated) */
+
+  /** Notable files content (READMEs, status docs, etc.) */
   notableFiles: Array<{ name: string; content: string }>;
 }
 
-/** Callback to scan an agent's workspace for reflection context */
+/**
+ * Callback to scan an agent's workspace for reflection context.
+ *
+ * @callback WorkspaceScanner
+ * @param agentId - The agent ID to scan the workspace for
+ * @returns Promise resolving to the workspace summary, or null if unavailable
+ */
 export type WorkspaceScanner = (agentId: string) => Promise<WorkspaceSummary | null>;
 
+/**
+ * Context gathered for agent reflection.
+ *
+ * @interface
+ */
 export interface ReflectionContext {
+  /** Agent performance statistics */
   stats: AgentStats | null;
+
+  /** Recent tasks (sorted by recency, limited) */
   recentTasks: Task[];
+
+  /** Recent conversation history */
   recentConversations: ReflectionConversation[];
+
+  /** The agent's current soul structure */
   soul: Awaited<ReturnType<SoulManager['load']>>;
+
+  /** Workspace directory summary */
   workspace: WorkspaceSummary | null;
+
   /** All proactive tasks ever created for this agent (any status) */
   pastProactiveTasks: Task[];
 }
 
+/**
+ * Result of an agent's reflection.
+ *
+ * @interface
+ */
 export interface ReflectionResult {
   /** Updated role identity based on work patterns */
   role: string;
+
+  /** New learnings extracted from recent work */
   newLearnings: string[];
+
+  /** Trait adjustments (delta values, clamped to [-1, 1]) */
   traitAdjustments: Record<string, number>;
+
+  /** New goals based on observed patterns */
   newGoals: string[];
+
+  /** Proactive tasks the agent should undertake */
   proactiveTasks: Array<{ title: string; description: string }>;
 }
 
 /**
  * Gathers metrics/context for an agent and triggers self-reflection.
+ *
  * When a TeamExecutor is provided, reflection is fully self-contained —
  * the engine resolves the model tier, executes the LLM call, parses the
  * result, and applies it (soul evolution + proactive task creation).
+ *
+ * @class
+ *
+ * @example
+ * ```typescript
+ * const engine = new SelfImprovementEngine(taskStore, statsStore, soulManager, eventBus);
+ * engine.setTeamExecutor(teamExecutor);
+ * engine.setConversationLoader(loadConversations);
+ * engine.setWorkspaceScanner(scanWorkspace);
+ *
+ * const result = await engine.triggerReflection('agent-1');
+ * console.log(result.newLearnings); // ["Users prefer shorter responses", ...]
+ * ```
  */
 export class SelfImprovementEngine {
+  /** Team executor for LLM calls (injected after construction) */
   private teamExecutor: ITeamExecutor | null = null;
+
+  /** Conversation loader (injected) */
   private conversationLoader: ConversationLoader | null = null;
+
+  /** Workspace scanner (injected) */
   private workspaceScanner: WorkspaceScanner | null = null;
 
+  /**
+   * Creates a new SelfImprovementEngine.
+   *
+   * @param taskStore - Task store for loading agent tasks
+   * @param statsStore - Stats store for loading agent statistics
+   * @param soulManager - Soul manager for loading/saving souls
+   * @param eventBus - Event bus for emitting events
+   */
   constructor(
     private readonly taskStore: ITaskStore,
     private readonly statsStore: IStatsStore,
@@ -65,21 +175,54 @@ export class SelfImprovementEngine {
     private readonly eventBus: IEventBus,
   ) {}
 
-  /** Inject the team executor after construction (avoids circular deps in orchestrator) */
+  /**
+   * Injects the team executor after construction.
+   *
+   * This avoids circular dependencies in the orchestrator.
+   *
+   * @param executor - The team executor instance
+   */
   setTeamExecutor(executor: ITeamExecutor): void {
     this.teamExecutor = executor;
   }
 
-  /** Inject a conversation loader to include chat history in reflections */
+  /**
+   * Injects a conversation loader.
+   *
+   * This allows reflections to include chat history.
+   *
+   * @param loader - Function to load conversation history
+   */
   setConversationLoader(loader: ConversationLoader): void {
     this.conversationLoader = loader;
   }
 
-  /** Inject a workspace scanner to include workspace context in reflections */
+  /**
+   * Injects a workspace scanner.
+   *
+   * This allows reflections to include workspace context.
+   *
+   * @param scanner - Function to scan agent workspaces
+   */
   setWorkspaceScanner(scanner: WorkspaceScanner): void {
     this.workspaceScanner = scanner;
   }
 
+  /**
+   * Gathers all context needed for an agent's reflection.
+   *
+   * Loads in parallel:
+   * - Agent statistics
+   * - Recent tasks (last 20, sorted by recency)
+   * - Current soul
+   * - Recent conversations (last 30)
+   * - Workspace summary
+   * - Past proactive tasks (for deduplication)
+   *
+   * @async
+   * @param agentId - The agent ID to gather context for
+   * @returns The gathered reflection context
+   */
   async gatherContext(agentId: string): Promise<ReflectionContext> {
     const [stats, allTasks, soul, recentConversations, workspace] = await Promise.all([
       this.statsStore.get(agentId),
@@ -108,8 +251,20 @@ export class SelfImprovementEngine {
   }
 
   /**
-   * Self-contained reflection: gather context, call LLM via TeamExecutor,
-   * parse response, and apply results. Requires `setTeamExecutor()` first.
+   * Triggers a self-contained reflection for an agent.
+   *
+   * This method:
+   * 1. Gathers context for the agent
+   * 2. Builds a reflection prompt
+   * 3. Executes the prompt via TeamExecutor
+   * 4. Parses the LLM response
+   * 5. Applies the results (soul evolution + proactive task creation)
+   *
+   * Requires setTeamExecutor() to have been called first.
+   *
+   * @async
+   * @param agentId - The agent ID to trigger reflection for
+   * @returns The reflection result, or null if TeamExecutor is not set
    */
   async triggerReflection(agentId: string): Promise<ReflectionResult | null> {
     if (!this.teamExecutor) {
@@ -132,6 +287,21 @@ export class SelfImprovementEngine {
     }
   }
 
+  /**
+   * Applies reflection results to an agent.
+   *
+   * This method:
+   * 1. Evolves the soul with new role, learnings, traits, and goals
+   * 2. Creates proactive tasks (deduplicated against existing tasks)
+   * 3. Emits TASK_CREATED events for each new task
+   *
+   * Proactive tasks are assigned back to the reflecting agent.
+   * These are actions the agent identified it should take to help the user.
+   *
+   * @async
+   * @param agentId - The agent ID to apply reflections to
+   * @param result - The reflection result to apply
+   */
   async applyReflection(
     agentId: string,
     result: ReflectionResult,
@@ -178,6 +348,27 @@ export class SelfImprovementEngine {
     }
   }
 
+  /**
+   * Builds the reflection prompt for an agent.
+   *
+   * This constructs a detailed prompt that includes:
+   * - Instructions for the LLM
+   * - Agent statistics (tasks completed, failed, success rate, etc.)
+   * - Recent task history
+   * - Past proactive tasks (to avoid duplicates)
+   * - Recent conversations with the user
+   * - Workspace contents
+   * - Current soul structure
+   *
+   * The prompt instructs the LLM to:
+   * 1. Define/refine the agent's role based on work patterns
+   * 2. Extract specific learnings from interactions
+   * 3. Adjust traits based on evidence (not aspirationally)
+   * 4. Identify proactive tasks the agent should undertake
+   *
+   * @param context - The reflection context
+   * @returns The formatted prompt string
+   */
   buildReflectionPrompt(context: ReflectionContext): string {
     const { stats, recentTasks, recentConversations, soul, workspace, pastProactiveTasks } = context;
 
@@ -324,7 +515,16 @@ export class SelfImprovementEngine {
     return lines.join('\n');
   }
 
-  /** Parse LLM JSON response, extracting from markdown code fences if needed */
+  /**
+   * Parses LLM JSON response, extracting from markdown code fences if needed.
+   *
+   * Handles both plain JSON and markdown-wrapped JSON (```json ... ```).
+   * Supports both old "improvementTasks" and new "proactiveTasks" keys.
+   *
+   * @param raw - The raw LLM response
+   * @returns The parsed reflection result
+   * @private
+   */
   private parseReflectionResult(raw: string): ReflectionResult {
     // Strip markdown code fences if present
     let json = raw.trim();
