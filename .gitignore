@@ -3,6 +3,12 @@ dist/
 dist-electron/
 release/
 *.tsbuildinfo
+**/*.tsbuildinfo
+
+# Build artifacts in source directories (should not be committed)
+packages/*/src/**/*.js
+packages/*/src/**/*.d.ts
+packages/*/src/**/*.map
 
 # Yarn
 .pnp.*
