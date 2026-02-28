@@ -38,6 +38,7 @@
 - [What is Jam?](#what-is-jam)
 - [Features](#features)
 - [Architecture](#architecture)
+- [Recent Improvements (Feb 2026)](#recent-improvements-feb-2026)
 - [Configuration](#configuration)
 - [Development](#development)
 - [Contributing](#contributing)
@@ -201,6 +202,43 @@ Jam lets you create, manage, and talk to a team of AI coding agents running on y
 | `@jam/memory` | File-based agent memory and session persistence |
 | `@jam/team` | Task scheduling, soul evolution, team collaboration |
 | `@jam/sandbox` | Docker-based agent sandboxing (optional) |
+
+## Recent Improvements (Feb 2026)
+
+A comprehensive codebase audit was performed with the following improvements:
+
+### Bug Fixes
+
+| Issue | Location | Fix |
+|-------|----------|-----|
+| Memory leak in log transport | `main.ts` | Added guard flag to prevent duplicate listeners during HMR |
+| Unhandled promise rejection | `main.ts` | Added `.then().catch()` chain for auto-start agents |
+| Missing error handling | `useIPCSubscriptions.ts` | Added catch handler for agent list loading failures |
+
+### Documentation Added (1,880+ lines)
+
+Comprehensive JSDoc documentation was added to all core modules:
+- `orchestrator.ts` - Service composition, lifecycle management
+- `command-router.ts` - Handler registry, agent resolution
+- `base-runtime.ts` - Template Method pattern, execution lifecycle
+- `output-strategy.ts` - Strategy pattern for stdout processing
+- `voice-service.ts` - STT/TTS coordination, caching
+- `command-parser.ts` - Agent name extraction strategies
+- `team-executor.ts` - Serialized queue execution
+- `soul-manager.ts` - Soul evolution and persistence
+- `self-improvement-engine.ts` - Reflection triggers
+- All IPC handlers - Terminal, Chat, Voice, etc.
+
+### Developer Onboarding
+
+A comprehensive [Developer Onboarding Guide](docs/DEVELOPER_ONBOARDING.md) is now available covering:
+- Architecture overview with diagrams
+- Key files to understand (in recommended reading order)
+- Design patterns used (Template Method, Strategy, Registry, Observer, DI)
+- Common development tasks
+- Known issues and future work
+
+---
 
 ## Configuration
 
