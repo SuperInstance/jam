@@ -47,11 +47,17 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
           store().setHasMoreHistory(result.hasMore);
           store().setIsLoadingHistory(false);
           store().setHistoryLoaded(true);
-        }).catch(() => {
+        }).catch((err) => {
+          // Log error but don't block app startup
+          console.error('Failed to load chat history:', err);
           store().setIsLoadingHistory(false);
           store().setHistoryLoaded(true);
         });
       }
+    }).catch((err) => {
+      // Critical: agent list failed - log and continue with empty list
+      console.error('Failed to load agent list:', err);
+      store().setAgents([]);
     });
 
     // Subscribe to events from main process

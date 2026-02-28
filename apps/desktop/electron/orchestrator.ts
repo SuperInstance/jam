@@ -1,3 +1,28 @@
+/**
+ * @fileoverview Orchestrator - Central service composition and lifecycle management.
+ *
+ * The Orchestrator is the core of the Jam desktop application, responsible for:
+ * - Creating and wiring together all service instances (dependency injection)
+ * - Managing Docker sandbox lifecycle (containers, images, host bridge)
+ * - Coordinating voice/text command routing between agents and the UI
+ * - Managing team services (tasks, communication, scheduling, self-improvement)
+ * - Handling TTS audio synthesis and streaming to the renderer
+ * - Event forwarding between the EventBus and the renderer process
+ *
+ * Design Principles:
+ * - Dependency Injection: All dependencies are created here and injected via constructors
+ * - Single Responsibility: Each service handles one domain (agents, voice, team, etc.)
+ * - Event-Driven: EventBus is the central communication bus
+ * - Factory Pattern: Provider registries use factory maps (OCP) - adding providers is data, not code
+ *
+ * Security Notes:
+ * - API keys encrypted via electron safeStorage (never in plaintext)
+ * - Shell commands use execFileSync with argument arrays (never string interpolation)
+ * - Host bridge operations are whitelisted only (no arbitrary command execution)
+ *
+ * @module desktop/electron/orchestrator
+ */
+
 import { app, BrowserWindow, shell, clipboard, Notification } from 'electron';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -71,47 +96,151 @@ import {
 
 const log = createLogger('Orchestrator');
 
+/**
+ * Central service composition and lifecycle manager for the Jam desktop application.
+ *
+ * The Orchestrator creates, wires together, and manages the lifecycle of all services
+ * in the application. It implements dependency injection, event forwarding, and
+ * coordinates between the agent runtime, voice services, team systems, and the UI.
+ *
+ * @class
+ *
+ * @example
+ * ```typescript
+ * const orchestrator = new Orchestrator();
+ * orchestrator.setMainWindow(mainWindow);
+ * orchestrator.initVoice();
+ * await orchestrator.startAutoStartAgents();
+ * ```
+ */
 export class Orchestrator {
+  /** Event bus for cross-service communication */
   readonly eventBus: EventBus;
+
+  /** Manages pseudo-terminals for agent processes (native or sandboxed) */
   readonly ptyManager: IPtyManager;
+
+  /** Registry of available agent runtimes (Claude Code, Cursor, etc.) */
   readonly runtimeRegistry: RuntimeRegistry;
+
+  /** Manages agent lifecycle, spawning, and execution */
   readonly agentManager: AgentManager;
+
+  /** Tracks and manages background services spawned by agents */
   readonly serviceRegistry: ServiceRegistry;
+
+  /** Docker container manager (null when sandbox is disabled) */
   readonly containerManager: IContainerManager | null = null;
+
+  /** Allocates host ports for containerized agents (null when sandbox is disabled) */
   private readonly portAllocator: PortAllocator | null = null;
+
+  /** Docker client (null when Docker is unavailable) */
   private readonly docker: DockerClient | null = null;
+
+  /** HTTP API bridge for containers to execute host operations (null when sandbox is disabled) */
   private readonly hostBridge: HostBridge | null = null;
+
+  /** File-based memory store for agent conversation history */
   readonly memoryStore: FileMemoryStore;
+
+  /** Persistent app configuration and encrypted API keys */
   readonly appStore: AppStore;
+
+  /** Loaded application configuration */
   readonly config: JamConfig;
+
+  /** Parses agent names and command types from text input */
   readonly commandParser: CommandParser;
+
+  /** Voice service for speech-to-text and text-to-speech (null if not initialized) */
   voiceService: VoiceService | null = null;
 
   // Team system services
+
+  /** Persistent task store */
   readonly taskStore: FileTaskStore;
+
+  /** Inter-agent communication hub */
   readonly communicationHub: FileCommunicationHub;
+
+  /** Agent relationship/trust tracking */
   readonly relationshipStore: FileRelationshipStore;
+
+  /** Agent statistics and performance metrics */
   readonly statsStore: FileStatsStore;
+
+  /** Manages agent soul/persona evolution */
   readonly soulManager: SoulManager;
+
+  /** Persistent schedule store */
   readonly scheduleStore: FileScheduleStore;
+
+  /** Schedules and triggers periodic agent tasks */
   readonly taskScheduler: TaskScheduler;
+
+  /** Intelligently assigns tasks to agents based on capabilities */
   readonly taskAssigner: SmartTaskAssigner;
+
+  /** Triggers periodic self-reflection for agents */
   readonly selfImprovement: SelfImprovementEngine;
+
+  /** Watches agent inboxes for incoming tasks */
   readonly inboxWatcher: InboxWatcher;
+
+  /** Handles team-related events and updates */
   readonly teamEventHandler: TeamEventHandler;
+
+  /** Resolves models for different team operation tiers */
   readonly modelResolver: ModelResolver;
+
+  /** Executes team AI operations through a dedicated runtime */
   readonly teamExecutor: ITeamExecutor;
+
+  /** Persistent code improvement suggestions store */
   readonly improvementStore: FileImprovementStore;
+
+  /** Automatic code improvement engine (opt-in feature) */
   readonly codeImprovement: CodeImprovementEngine | null = null;
+
+  /** Path to shared skills directory injected into all agents */
   private readonly sharedSkillsDir: string;
+
+  /** Promise that resolves when the Docker image is ready (used before launching containers) */
   private readonly imageReady: Promise<void> = Promise.resolve();
+
+  /** Agent IDs reclaimed from previous session (for hot-reload container reuse) */
   private readonly reclaimedAgentIds: Set<string> = new Set();
+
   /** Set to true once all auto-start agents have been launched */
   private sandboxFullyReady = false;
+
+  /** Executes detached tasks for agents */
   readonly taskExecutor: TaskExecutor;
 
+  /** Reference to the main Electron window (for IPC sends) */
   private mainWindow: BrowserWindow | null = null;
 
+  /**
+   * Creates a new Orchestrator instance and initializes all services.
+   *
+   * The constructor performs the following initialization:
+   * 1. Loads configuration and creates the EventBus
+   * 2. Initializes PTY manager (sandboxed or native based on config)
+   * 3. Sets up Docker infrastructure if sandbox mode is enabled
+   * 4. Registers all available agent runtimes
+   * 5. Creates the AgentManager with all dependencies
+   * 6. Initializes all team system services
+   * 7. Sets up voice provider factories (STT/TTS)
+   * 8. Bootstraps shared skills directory
+   *
+   * @throws {Error} If Docker initialization fails in sandbox mode
+   *
+   * @example
+   * ```typescript
+   * const orchestrator = new Orchestrator();
+   * ```
+   */
   constructor() {
     this.config = loadConfig();
     this.eventBus = new EventBus();
@@ -447,7 +576,22 @@ export class Orchestrator {
     );
   }
 
-  /** Create shared skills directory and update default skill files */
+  /**
+   * Creates the shared skills directory and populates it with default skill files.
+   *
+   * The shared skills directory contains markdown files that teach agents how to:
+   * - Manage background processes safely
+   * - Handle secrets and API keys securely
+   * - Communicate with other agents
+   * - Use the host bridge (in sandbox mode)
+   *
+   * This method is called during orchestrator initialization. Files are always
+   * overwritten to ensure agents get the latest skill instructions.
+   *
+   * @param dir - Absolute path to the shared skills directory
+   * @throws {Error} If directory creation or file writing fails
+   * @private
+   */
   private async bootstrapSharedSkills(dir: string): Promise<void> {
     await mkdir(dir, { recursive: true });
 
@@ -539,6 +683,20 @@ export class Orchestrator {
     }
   }
 
+  /**
+   * Sets the main Electron window reference and starts event forwarding.
+   *
+   * This method must be called after the window is created. It:
+   * 1. Stores the window reference for IPC sends
+   * 2. Subscribes to all EventBus events and forwards them to the renderer
+   * 3. Sets up batching for high-frequency events (terminal output)
+   * 4. Handles agent status changes and TTS events
+   *
+   * Event forwarding is guarded against destroyed windows to prevent crashes
+   * during hot module reload (HMR).
+   *
+   * @param win - The main Electron BrowserWindow instance
+   */
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win;
 
@@ -753,6 +911,23 @@ export class Orchestrator {
     });
   }
 
+  /**
+   * Initializes the voice service with configured STT and TTS providers.
+   *
+   * This method:
+   * 1. Creates STT and TTS provider instances using API keys from the app store
+   * 2. Instantiates the VoiceService with the providers
+   * 3. Syncs agent names to the command parser for voice recognition
+   *
+   * Voice initialization only happens if API keys are available for both
+   * STT and TTS providers. Missing keys are logged as a warning.
+   *
+   * @example
+   * ```typescript
+   * orchestrator.initVoice();
+   * // Voice service is now ready to transcribe audio and synthesize speech
+   * ```
+   */
   initVoice(): void {
     const sttProvider = this.createSTTProvider(this.config.sttProvider);
     const ttsProvider = this.createTTSProvider(this.config.ttsProvider);
@@ -945,6 +1120,27 @@ export class Orchestrator {
     await this.speakToRenderer(agentId, text);
   }
 
+  /**
+   * Starts all agents marked with autoStart: true and initializes team services.
+   *
+   * This method performs the following sequence:
+   * 1. Waits for the Docker image to be ready (if sandbox mode is enabled)
+   * 2. Cleans up any LaunchAgent plists that agents may have installed
+   * 3. Starts all agents with autoStart enabled
+   * 4. Scans and kills orphan services from previous sessions
+   * 5. Starts the service registry health monitor
+   * 6. Starts all team services (event handler, task executor, scheduler)
+   * 7. Watches agent inboxes for incoming tasks
+   *
+   * This should be called after setMainWindow() and initVoice().
+   *
+   * @throws {Error} If container startup fails in sandbox mode
+   * @example
+   * ```typescript
+   * await orchestrator.startAutoStartAgents();
+   * // All auto-start agents are now running
+   * ```
+   */
   async startAutoStartAgents(): Promise<void> {
     // Wait for Docker image to be ready before launching any containers
     await this.imageReady;
@@ -998,10 +1194,21 @@ export class Orchestrator {
   }
 
   /**
-   * Remove any LaunchAgent plists agents may have installed.
+   * Removes any LaunchAgent plists that agents may have installed.
+   *
    * Agents are forbidden from creating system daemons, but older agents or
    * misbehaving LLMs may have created them before the rule was added.
-   * Scans ~/Library/LaunchAgents for plists referencing .jam/agents paths.
+   *
+   * This method:
+   * 1. Scans ~/Library/LaunchAgents for plist files
+   * 2. Identifies plists that reference .jam/agents directories
+   * 3. Unloads them using launchctl bootout
+   * 4. Deletes the plist files
+   *
+   * This is a macOS-only operation (no-op on other platforms).
+   *
+   * @throws {Error} If plist file operations fail (errors are logged, not thrown)
+   * @private
    */
   async cleanupAgentLaunchAgents(): Promise<void> {
     if (process.platform !== 'darwin') return;
@@ -1087,11 +1294,32 @@ export class Orchestrator {
   }
 
   /**
-   * Shut down all services and clean up resources.
+   * Shuts down all services and cleans up resources.
+   *
+   * This is the main cleanup method called when the app exits or during HMR.
+   * It performs the following in order:
+   * 1. Stops team services (task executor, event handler, scheduler)
+   * 2. Flushes all debounced file writes (tasks, stats, schedules, improvements)
+   * 3. Stops agent health checks
+   * 4. Scans and stops all agent-spawned services
+   * 5. Stops all agents
+   * 6. Kills all PTY processes
+   * 7. Stops the host bridge
+   * 8. Handles Docker containers based on keepContainers flag
+   * 9. Removes all EventBus listeners
    *
    * @param keepContainers - If true, Docker containers stay running for fast
    *   reclaim on next startup (used during HMR hot reload). If false, containers
-   *   are stopped and removed (used on real app exit).
+   *   are stopped and removed according to the configured exit behavior.
+   *
+   * @example
+   * ```typescript
+   * // Normal app exit - clean up everything
+   * await orchestrator.shutdown(false);
+   *
+   * // HMR reload - keep containers alive
+   * await orchestrator.shutdown(true);
+   * ```
    */
   async shutdown(keepContainers = false): Promise<void> {
     this.taskExecutor.stop();

@@ -1,10 +1,39 @@
+/**
+ * @fileoverview SoulManager - Agent soul/persona persistence and evolution.
+ *
+ * The SoulManager handles agent identity and personality through:
+ * - Loading/saving soul data from SOUL.md files
+ * - Parsing YAML frontmatter and markdown sections
+ * - Evolving souls with new learnings, trait adjustments, and goals
+ * - Emitting events when souls evolve
+ *
+ * Soul Structure:
+ * - Persona: A brief description of the agent's identity
+ * - Role: Professional role (e.g., "Frontend Developer")
+ * - Traits: Named numeric values (0-1) for personality attributes
+ * - Goals: Array of objectives the agent is working toward
+ * - Strengths/Weaknesses: Capabilities and limitations
+ * - Learnings: Accumulated knowledge over time
+ *
+ * @module team/soul-manager
+ */
+
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import type { SoulStructure, IEventBus } from '@jam/core';
 import { Events } from '@jam/core';
 
-/** Normalize a trait name to a canonical stem for fuzzy matching.
- *  Strips common suffixes (-ness, -ity, -ive, -tion) and normalizes separators. */
+/**
+ * Normalizes a trait name to a canonical stem for fuzzy matching.
+ *
+ * Strips common suffixes (-ness, -ity, -ive, -tion, -ment) and normalizes
+ * separators to underscores. This allows "proactiveness" and "proactive" to
+ * match as the same trait.
+ *
+ * @param name - The trait name to normalize
+ * @returns The normalized trait stem
+ * @private
+ */
 function traitStem(name: string): string {
   return name
     .toLowerCase()
@@ -13,7 +42,17 @@ function traitStem(name: string): string {
     .replace(/_$/, '');
 }
 
-/** Find the existing trait key that matches `incoming`, or return `incoming` as-is if no match. */
+/**
+ * Finds the existing trait key that matches an incoming trait name.
+ *
+ * Uses fuzzy matching via trait stems to find the canonical trait name.
+ * If no match is found, the incoming name is returned as-is (new trait).
+ *
+ * @param incoming - The incoming trait name to match
+ * @param existing - Map of existing trait names to values
+ * @returns The canonical trait key from existing, or the incoming name
+ * @private
+ */
 function findCanonicalTrait(incoming: string, existing: Record<string, number>): string {
   // Exact match first
   if (incoming in existing) return incoming;
@@ -28,6 +67,12 @@ function findCanonicalTrait(incoming: string, existing: Record<string, number>):
   return incoming;
 }
 
+/**
+ * Creates a default soul structure.
+ *
+ * @returns A new soul with empty/default values
+ * @private
+ */
 function defaultSoul(): SoulStructure {
   return {
     persona: '',
@@ -42,7 +87,17 @@ function defaultSoul(): SoulStructure {
   };
 }
 
-/** Parse YAML-like frontmatter from SOUL.md into SoulStructure. */
+/**
+ * Parses YAML-like frontmatter from SOUL.md into SoulStructure.
+ *
+ * Handles both frontmatter format and markdown sections:
+ * - Frontmatter: version, lastReflection, persona, role
+ * - Sections: ## Traits, ## Goals, ## Strengths, ## Weaknesses, ## Learnings
+ *
+ * @param content - The SOUL.md file content
+ * @returns The parsed soul structure
+ * @private
+ */
 function parseSoulMd(content: string): SoulStructure {
   const soul = defaultSoul();
 
@@ -119,7 +174,15 @@ function parseSoulMd(content: string): SoulStructure {
   return soul;
 }
 
-/** Serialize SoulStructure to SOUL.md format. */
+/**
+ * Serializes SoulStructure to SOUL.md format.
+ *
+ * Generates both YAML frontmatter and markdown sections.
+ *
+ * @param soul - The soul structure to serialize
+ * @returns The SOUL.md file content
+ * @private
+ */
 function serializeSoulMd(soul: SoulStructure): string {
   const lines: string[] = [];
 
@@ -179,12 +242,54 @@ function serializeSoulMd(soul: SoulStructure): string {
   return lines.join('\n');
 }
 
+/**
+ * Manages agent soul/persona persistence and evolution.
+ *
+ * The SoulManager is responsible for:
+ * - Loading soul data from SOUL.md files
+ * - Saving soul data to disk
+ * - Evolving souls with new learnings, trait adjustments, and goals
+ * - Emitting events when souls change
+ *
+ * Souls are stored as SOUL.md files in each agent's directory.
+ *
+ * @class
+ *
+ * @example
+ * ```typescript
+ * const soulManager = new SoulManager('/path/to/agents', eventBus);
+ *
+ * // Load an agent's soul
+ * const soul = await soulManager.load('agent-1');
+ *
+ * // Evolve the soul with new learnings
+ * await soulManager.evolve('agent-1', {
+ *   newLearnings: ['Users prefer shorter responses'],
+ *   traitAdjustments: { 'concise': 0.1 }
+ * });
+ * ```
+ */
 export class SoulManager {
+  /**
+   * Creates a new SoulManager.
+   *
+   * @param baseDir - Base directory containing agent directories
+   * @param eventBus - Event bus for emitting soul evolution events
+   */
   constructor(
     private readonly baseDir: string,
     private readonly eventBus: IEventBus,
   ) {}
 
+  /**
+   * Loads an agent's soul from disk.
+   *
+   * If the SOUL.md file doesn't exist or is invalid, returns a default soul.
+   *
+   * @async
+   * @param agentId - The agent ID to load the soul for
+   * @returns The loaded soul structure
+   */
   async load(agentId: string): Promise<SoulStructure> {
     const filePath = join(this.baseDir, agentId, 'SOUL.md');
     try {
@@ -195,12 +300,41 @@ export class SoulManager {
     }
   }
 
+  /**
+   * Saves an agent's soul to disk.
+   *
+   * Creates the agent directory if it doesn't exist.
+   *
+   * @async
+   * @param agentId - The agent ID to save the soul for
+   * @param soul - The soul structure to save
+   */
   async save(agentId: string, soul: SoulStructure): Promise<void> {
     const filePath = join(this.baseDir, agentId, 'SOUL.md');
     await mkdir(dirname(filePath), { recursive: true });
     await writeFile(filePath, serializeSoulMd(soul), 'utf-8');
   }
 
+  /**
+   * Evolves an agent's soul with new reflections.
+   *
+   * This method:
+   * 1. Loads the existing soul
+   * 2. Applies trait adjustments (with fuzzy matching to existing traits)
+   * 3. Adds new learnings, goals, strengths, and weaknesses
+   * 4. Updates the role if provided
+   * 5. Increments the version and updates the timestamp
+   * 6. Saves the evolved soul
+   * 7. Emits a SOUL_EVOLVED event
+   *
+   * Trait adjustments are clamped to the range [0, 1] and use fuzzy matching
+   * to avoid creating duplicate traits (e.g., "proactive" and "proactiveness").
+   *
+   * @async
+   * @param agentId - The agent ID to evolve the soul for
+   * @param reflections - The reflection data to apply
+   * @returns The evolved soul structure
+   */
   async evolve(
     agentId: string,
     reflections: {

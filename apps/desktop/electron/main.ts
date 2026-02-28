@@ -67,6 +67,8 @@ if (process.env.VITE_DEV_SERVER_URL) {
 const logBuffer: LogEntry[] = [];
 let logIpcPending: LogEntry[] = [];
 let logIpcTimer: ReturnType<typeof setTimeout> | null = null;
+/** Guard to prevent duplicate log transport registration during HMR */
+let logTransportRegistered = false;
 
 function flushLogIpc(): void {
   logIpcTimer = null;
@@ -77,14 +79,18 @@ function flushLogIpc(): void {
   logIpcPending = [];
 }
 
-addLogTransport((entry: LogEntry) => {
-  logBuffer.push(entry);
-  if (logBuffer.length > LOG_BUFFER_SIZE) logBuffer.shift();
-  logIpcPending.push(entry);
-  if (!logIpcTimer) {
-    logIpcTimer = setTimeout(flushLogIpc, LOG_IPC_BATCH_MS);
-  }
-});
+// Only register log transport once (prevents duplicate listeners during HMR)
+if (!logTransportRegistered) {
+  logTransportRegistered = true;
+  addLogTransport((entry: LogEntry) => {
+    logBuffer.push(entry);
+    if (logBuffer.length > LOG_BUFFER_SIZE) logBuffer.shift();
+    logIpcPending.push(entry);
+    if (!logIpcTimer) {
+      logIpcTimer = setTimeout(flushLogIpc, LOG_IPC_BATCH_MS);
+    }
+  });
+}
 
 // --- Single instance lock ---
 const gotTheLock = app.requestSingleInstanceLock();
@@ -284,7 +290,11 @@ app.whenReady().then(() => {
     ensureClaudePermissionAccepted();
   }
 
-  orchestrator.startAutoStartAgents();
+  // Start auto-start agents (async) - don't block app startup
+  orchestrator.startAutoStartAgents()
+    .then(() => log.info('Auto-start agents launched successfully'))
+    .catch((err) => log.error(`Failed to start auto-start agents: ${String(err)}`));
+
   log.info('App started successfully');
 });
 

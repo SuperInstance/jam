@@ -1,12 +1,43 @@
+/**
+ * @fileoverview JSONL Parser - Shared utilities for parsing JSONL stream output.
+ *
+ * This module provides a single source of truth for parsing JSONL (newline-delimited JSON)
+ * output from agent runtimes like Claude Code and Cursor. It eliminates duplication
+ * between runtime implementations.
+ *
+ * Functions:
+ * - parseJsonlStreamEvent: Parses a single line and emits progress events
+ * - emitJsonlTerminalLine: Converts JSON events to markdown-friendly terminal output
+ * - hasResultEvent: Checks if stdout contains a result event
+ * - parseJsonlResult: Extracts the final result and token usage from stdout
+ *
+ * @module agent-runtime/runtimes/jsonl-parser
+ */
+
 import type { ExecutionProgress, ExecutionResult, TokenUsage } from '@jam/core';
 import { stripAnsiSimple } from '../utils.js';
 
 /**
- * Shared JSONL parsing utilities for stream-json runtimes (Claude Code, Cursor).
- * Single source of truth — eliminates duplication between runtimes.
+ * Parses a single JSONL stream event and emits structured progress.
+ *
+ * This function handles various event shapes from different runtimes:
+ * - Tool use events (type: 'tool_use' or tool_name field)
+ * - Content block events (type: 'content_block_start')
+ * - Thinking events
+ * - Message start events
+ *
+ * Unrecognized JSON is silently ignored.
+ *
+ * @param line - A single line of JSONL output
+ * @param onProgress - Callback to emit progress events
+ *
+ * @example
+ * ```typescript
+ * parseJsonlStreamEvent('{"type":"tool_use","tool_name":"bash","input":{"command":"ls"}}', (event) => {
+ *   console.log(event); // { type: 'tool-use', summary: 'Using bash: ls' }
+ * });
+ * ```
  */
-
-/** Parse a single JSONL stream event and emit structured progress */
 export function parseJsonlStreamEvent(
   line: string,
   onProgress: (event: ExecutionProgress) => void,
@@ -54,7 +85,27 @@ export function parseJsonlStreamEvent(
   }
 }
 
-/** Convert a JSONL event into markdown-friendly text for streamdown rendering */
+/**
+ * Converts a JSONL event into markdown-friendly text for terminal rendering.
+ *
+ * This function transforms structured JSON events into human-readable text:
+ * - Tool use: Rendered as inline code with command/file
+ * - Tool result: Rendered as code block
+ * - Text content: Emitted as-is for streaming
+ * - Thinking: Rendered as italic placeholder
+ *
+ * Non-JSON lines are emitted as-is (fallback for malformed output).
+ *
+ * @param line - A single line of JSONL output
+ * @param onOutput - Callback to emit terminal text
+ *
+ * @example
+ * ```typescript
+ * emitJsonlTerminalLine('{"type":"tool_use","name":"bash","input":{"command":"ls"}}', (text) => {
+ *   console.log(text); // "\n`bash` ls\n"
+ * });
+ * ```
+ */
 export function emitJsonlTerminalLine(
   line: string,
   onOutput: (data: string) => void,
@@ -126,8 +177,23 @@ export function emitJsonlTerminalLine(
   }
 }
 
-/** Check if JSONL stdout contains an explicit `result` event.
- *  Used to distinguish genuine agent output from raw text fallback. */
+/**
+ * Checks if JSONL stdout contains an explicit result event.
+ *
+ * This is used to distinguish genuine agent output (which has a result event)
+ * from raw text fallback (which doesn't).
+ *
+ * @param stdout - The full stdout from the agent process
+ * @returns True if a result event is found
+ *
+ * @example
+ * ```typescript
+ * if (hasResultEvent(stdout)) {
+ *   const result = parseJsonlResult(stdout);
+ *   console.log(result.text);
+ * }
+ * ```
+ */
 export function hasResultEvent(stdout: string): boolean {
   for (const line of stdout.trim().split('\n')) {
     try {
@@ -138,8 +204,30 @@ export function hasResultEvent(stdout: string): boolean {
   return false;
 }
 
-/** Extract the result from JSONL stdout (search backward for 'result' event).
- *  Also aggregates token usage from all events that report it. */
+/**
+ * Extracts the result from JSONL stdout.
+ *
+ * This function:
+ * 1. Searches backward for the last 'result' event (most recent result wins)
+ * 2. Aggregates token usage from all events that report it
+ * 3. Falls back to parsing as single JSON if no result event found
+ * 4. Final fallback: returns raw stdout stripped of ANSI codes
+ *
+ * Token usage aggregation supports multiple event shapes:
+ * - Claude Code: result event with total_input_tokens / total_output_tokens
+ * - Generic: message events with usage.input_tokens / usage.output_tokens
+ *
+ * @param stdout - The full stdout from the agent process
+ * @returns The parsed execution result with text, session ID, and token usage
+ *
+ * @example
+ * ```typescript
+ * const result = parseJsonlResult(stdout);
+ * console.log(result.text);      // Agent's response text
+ * console.log(result.usage);     // { inputTokens: 1000, outputTokens: 500 }
+ * console.log(result.sessionId); // "sess_abc123"
+ * ```
+ */
 export function parseJsonlResult(stdout: string): ExecutionResult {
   const lines = stdout.trim().split('\n');
   const usage = extractTokenUsage(lines);
@@ -178,10 +266,19 @@ export function parseJsonlResult(stdout: string): ExecutionResult {
   }
 }
 
-/** Aggregate token usage from JSONL stream events.
- *  Supports multiple event shapes:
- *  - Claude Code: `result` event with `total_cost_usd`, or message events with `usage`
- *  - Generic: any event with `usage.input_tokens` / `usage.output_tokens` */
+/**
+ * Aggregates token usage from JSONL stream events.
+ *
+ * This function extracts token usage from various event shapes:
+ * - Claude Code result event: total_input_tokens / total_output_tokens
+ * - Claude Code result event (nested): usage.input_tokens / usage.output_tokens
+ * - Anthropic API message events: usage.input_tokens / usage.output_tokens
+ * - Nested message events: message.usage.input_tokens / message.usage.output_tokens
+ *
+ * @param lines - Array of JSONL lines from stdout
+ * @returns Token usage with input/output counts, or undefined if not found
+ * @private
+ */
 function extractTokenUsage(lines: string[]): TokenUsage | undefined {
   let inputTokens = 0;
   let outputTokens = 0;

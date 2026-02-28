@@ -1,3 +1,41 @@
+/**
+ * Voice IPC Handlers
+ *
+ * This module handles all voice-related IPC communication between the
+ * renderer process (React UI) and main process (Electron). It provides:
+ * - Speech-to-text (STT) audio chunk processing
+ * - Text-to-speech (TTS) synthesis requests
+ * - Voice activity detection configuration
+ * - Microphone permission management
+ *
+ * Architecture:
+ * - Audio chunks are sent from renderer via ipcMain.on (fire-and-forget)
+ * - STT providers (Whisper, ElevenLabs) are pluggable via VoiceService
+ * - TTS providers (OpenAI, ElevenLabs) support streaming for lower latency
+ * - Command parsing extracts agent names and command types from transcribed text
+ *
+ * Voice Command Flow:
+ * 1. User speaks → MicButton captures audio in renderer
+ * 2. Audio chunks sent via IPC → this handler
+ * 3. VoiceService.transcribe() → text via STT provider
+ * 4. Noise filtering → remove hallucinations, short utterances
+ * 5. CommandParser.parse() → extract target agent and command
+ * 6. CommandRouter.resolveTarget() → find which agent
+ * 7. AgentManager.enqueueCommand() → queue for execution
+ * 8. Result sent back via IPC events
+ *
+ * Noise Filtering Pipeline:
+ * - Remove parenthetical asides (hallucinations from music/ads)
+ * - Filter by minimum length (5 chars) and word count (2+)
+ * - Check confidence threshold (default: 0.4)
+ * - Block known noise phrases via blocklist
+ * - Filter by no_speech_prob (Whisper-specific)
+ *
+ * Security:
+ * - No user input is executed directly - all goes through command parsing
+ * - TTS audio files are stored in app data directory
+ * - Microphone permission required (macOS)
+ */
 import { ipcMain, systemPreferences, type BrowserWindow } from 'electron';
 import { createLogger } from '@jam/core';
 import type { AgentManager } from '@jam/agent-runtime';
@@ -7,25 +45,60 @@ import type { JamConfig } from '../config';
 
 const log = createLogger('VoiceHandlers');
 
-const SENSITIVITY_THRESHOLDS: Record<string, number> = { low: 0.01, medium: 0.03, high: 0.06 };
+/**
+ * Voice activity detection (VAD) threshold values.
+ * Higher values = less sensitive (requires louder audio to trigger).
+ * Used to configure the WebAudio-based VAD in the renderer.
+ */
+const SENSITIVITY_THRESHOLDS: Record<string, number> = {
+  low: 0.01,    // Very sensitive - picks up quiet speech
+  medium: 0.03, // Balanced - recommended default
+  high: 0.06,   // Less sensitive - noisy environments
+};
 
-/** Narrow dependency interface — only what voice handlers need */
+/**
+ * Narrow dependency interface — only what voice handlers need.
+ * This follows the Interface Segregation Principle (ISP).
+ */
 export interface VoiceHandlerDeps {
+  /** Getter for VoiceService (may be null if not initialized) */
   getVoiceService: () => VoiceService | null;
+  /** Manager for agent lifecycle and command execution */
   agentManager: AgentManager;
+  /** Application configuration including noise filter settings */
   config: JamConfig;
+  /** Callback to speak a message to the renderer via TTS */
   speakToRenderer: (agentId: string, message: string) => void;
 }
 
+/**
+ * Register all voice-related IPC handlers.
+ *
+ * @param deps - Dependencies (voice service getter, agent manager, config, TTS callback)
+ * @param router - Command router for target resolution and dispatch
+ * @param getWindow - Function to get the main window (for sending events back)
+ */
 export function registerVoiceHandlers(
   deps: VoiceHandlerDeps,
   router: CommandRouter,
   getWindow: () => BrowserWindow | null,
 ): void {
   const { getVoiceService, agentManager, config, speakToRenderer } = deps;
+
+  /**
+   * Tracks whether TTS is currently playing.
+   * When TTS is active, incoming audio chunks are ignored to prevent
+   * the microphone from picking up the TTS output and creating feedback.
+   */
   let ttsSpeaking = false;
 
-  /** Send a system message to the chat UI + speak it via TTS */
+  /**
+   * Send a system message to the chat UI and speak it via TTS.
+   * Used for status updates like "Agent is working on that."
+   *
+   * @param targetId - The agent ID this message is from
+   * @param message - The message to display and speak
+   */
   function sendStatusMessage(targetId: string, message: string): void {
     const info = router.getAgentInfo(targetId);
     const win = getWindow();
@@ -41,11 +114,31 @@ export function registerVoiceHandlers(
     speakToRenderer(targetId, message);
   }
 
+  /**
+   * Receive TTS playback state from renderer.
+   * The renderer sends 'true' when TTS starts playing and 'false' when done.
+   * This is used to ignore microphone input during TTS playback (echo prevention).
+   */
   ipcMain.on('voice:ttsState', (_, playing: boolean) => {
     ttsSpeaking = playing;
     log.debug(`TTS state from renderer: ${playing ? 'speaking' : 'idle'}`);
   });
 
+  /**
+   * Process an audio chunk for speech-to-text.
+   *
+   * This is the main voice command entry point. The flow is:
+   * 1. Check if voice service is ready and TTS isn't playing
+   * 2. Transcribe audio via STT provider (Whisper/ElevenLabs)
+   * 3. Apply noise filtering to remove hallucinations
+   * 4. Parse command to extract target agent and command text
+   * 5. Route to appropriate agent via CommandRouter
+   * 6. Queue command for execution
+   * 7. Send result back to renderer
+   *
+   * @param _agentId - Unused (reserved for future per-agent voice config)
+   * @param chunk - Raw audio data as ArrayBuffer (WebM/WAV format)
+   */
   ipcMain.on(
     'voice:audioChunk',
     async (_, _agentId: string, chunk: ArrayBuffer) => {
