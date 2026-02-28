@@ -1,11 +1,74 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { normalize, resolve, sep } from 'node:path';
 import type { IHostBridge } from '@jam/core';
 import { createLogger } from '@jam/core';
 
 const log = createLogger('HostBridge');
 
 const MAX_BODY_SIZE = 1_024 * 1_024; // 1MB
+
+/** Characters and patterns that indicate path traversal attempts */
+const PATH_TRAVERSAL_PATTERNS = [
+  '..',
+  '\0',           // Null byte injection
+];
+
+/**
+ * Validates a file path for security issues.
+ * Returns an error message if validation fails, or null if the path is safe.
+ */
+function validatePathSafety(rawPath: string): string | null {
+  // Normalize the path to resolve . and .. sequences
+  const normalizedPath = normalize(rawPath);
+
+  // Check for path traversal patterns in the raw input
+  for (const pattern of PATH_TRAVERSAL_PATTERNS) {
+    if (rawPath.includes(pattern)) {
+      return `Invalid path: contains forbidden pattern`;
+    }
+  }
+
+  // Ensure the normalized path doesn't escape upward
+  if (normalizedPath.startsWith('..') || normalizedPath.includes(`..${sep}`)) {
+    return 'Invalid path: path traversal detected';
+  }
+
+  // On Windows, block drive letter access attempts (e.g., C:\)
+  if (process.platform === 'win32') {
+    if (/^[a-zA-Z]:\\/.test(normalizedPath) && !normalizedPath.includes(':\\Users\\')) {
+      return 'Invalid path: access to system directories not allowed';
+    }
+  }
+
+  // Block access to sensitive Unix paths
+  if (process.platform !== 'win32') {
+    const sensitivePaths = ['/etc', '/root', '/var', '/usr', '/bin', '/sbin', '/boot'];
+    for (const sensitive of sensitivePaths) {
+      if (normalizedPath.startsWith(sensitive + '/') || normalizedPath === sensitive) {
+        return `Invalid path: access to ${sensitive} not allowed`;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Timing-safe string comparison to prevent timing attacks.
+ * Uses Node's crypto.timingSafeEqual under the hood.
+ */
+function timingSafeCompare(a: string, b: string): boolean {
+  // Strings must be equal length for timingSafeEqual
+  if (a.length !== b.length) {
+    return false;
+  }
+  // Convert to buffers for comparison
+  const bufA = Buffer.from(a, 'utf8');
+  const bufB = Buffer.from(b, 'utf8');
+  return timingSafeEqual(bufA, bufB);
+}
 
 /** Injected host capabilities — keeps this package free of Electron imports (DIP) */
 export interface HostBridgeDeps {
@@ -101,9 +164,10 @@ export class HostBridge implements IHostBridge {
       return;
     }
 
-    // Validate auth token
+    // Validate auth token (timing-safe to prevent timing attacks)
     const authHeader = req.headers.authorization;
-    if (!authHeader || authHeader !== `Bearer ${this.token}`) {
+    const expectedAuth = `Bearer ${this.token}`;
+    if (!authHeader || !timingSafeCompare(authHeader, expectedAuth)) {
       res.writeHead(401);
       res.end(JSON.stringify({ success: false, error: 'Unauthorized' }));
       return;
@@ -237,6 +301,8 @@ export class HostBridge implements IHostBridge {
       ['file-open', {
         validate: (params) => {
           if (typeof params.path !== 'string') return 'Missing "path" parameter';
+          const pathError = validatePathSafety(params.path);
+          if (pathError) return pathError;
           return null;
         },
         execute: async (params) => {

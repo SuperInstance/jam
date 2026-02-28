@@ -14,6 +14,7 @@ import type { SoulEntry } from '@/store/teamSlice';
 export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
   useEffect(() => {
     const store = () => useAppStore.getState();
+    const timers = new Set<ReturnType<typeof setTimeout>>();
 
     // Load initial agent list, then load conversation history
     window.jam.agents.list().then((agents) => {
@@ -103,7 +104,11 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
       ({ text, isFinal }) => {
         store().setTranscript({ text, isFinal });
         if (isFinal) {
-          setTimeout(() => store().setTranscript(null), 2000);
+          const timer = setTimeout(() => {
+            store().setTranscript(null);
+            timers.delete(timer);
+          }, 2000);
+          timers.add(timer);
         }
       },
     );
@@ -266,6 +271,9 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
     // This prevents double-handling IPC events.
 
     return () => {
+      // Clear all pending timers
+      timers.forEach((t) => clearTimeout(t));
+
       unsubStatusChange();
       unsubCreated();
       unsubDeleted();
