@@ -1,6 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '@/store';
 
+// Terminal configuration constants
+const TERMINAL_SCROLLBACK = 5000;
+const TERMINAL_FONT_SIZE = 13;
+const TERMINAL_THEME = {
+  background: '#09090b',
+  foreground: '#e6edf3',
+  cursor: '#58a6ff',
+  selectionBackground: '#264f78',
+} as const;
+
 // Types for dynamically imported modules
 type TerminalType = typeof import('@xterm/xterm').Terminal;
 type FitAddonType = typeof import('@xterm/addon-fit').FitAddon;
@@ -30,16 +40,11 @@ export function useAgentTerminal(agentId: string) {
       if (disposed) return;
 
       const terminal = new Terminal({
-        theme: {
-          background: '#09090b',
-          foreground: '#e6edf3',
-          cursor: '#58a6ff',
-          selectionBackground: '#264f78',
-        },
-        fontSize: 13,
+        theme: TERMINAL_THEME,
+        fontSize: TERMINAL_FONT_SIZE,
         fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
         cursorBlink: true,
-        scrollback: 5000,
+        scrollback: TERMINAL_SCROLLBACK,
       });
 
       const fitAddon = new FitAddon();

@@ -25,6 +25,17 @@ import { registerTeamHandlers } from './ipc/team-handlers';
 
 const log = createLogger('Main');
 
+// --- Window configuration constants ---
+const DEFAULT_WINDOW_WIDTH = 1200;
+const DEFAULT_WINDOW_HEIGHT = 800;
+const MIN_WINDOW_WIDTH = 640;
+const MIN_WINDOW_HEIGHT = 480;
+const TRAFFIC_LIGHT_POSITION_X = 15;
+const TRAFFIC_LIGHT_POSITION_Y = 12;
+const WINDOW_BACKGROUND_COLOR = '#09090b';
+const LOG_BUFFER_SIZE = 500;
+const LOG_IPC_BATCH_MS = 200;
+
 // --- Fix PATH for macOS/Linux GUI apps ---
 fixPath();
 log.debug(`PATH resolved: ${process.env.PATH}`);
@@ -53,9 +64,7 @@ if (process.env.VITE_DEV_SERVER_URL) {
 }
 
 // --- Log Buffer & IPC Transport (batched) ---
-const LOG_BUFFER_SIZE = 500;
 const logBuffer: LogEntry[] = [];
-const LOG_IPC_BATCH_MS = 200;
 let logIpcPending: LogEntry[] = [];
 let logIpcTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -95,14 +104,14 @@ app.on('second-instance', () => {
 // --- Window creation ---
 function createWindow(): void {
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    minWidth: 640,
-    minHeight: 480,
+    width: DEFAULT_WINDOW_WIDTH,
+    height: DEFAULT_WINDOW_HEIGHT,
+    minWidth: MIN_WINDOW_WIDTH,
+    minHeight: MIN_WINDOW_HEIGHT,
     frame: false,
     titleBarStyle: 'hidden',
-    trafficLightPosition: { x: 15, y: 12 },
-    backgroundColor: '#09090b',
+    trafficLightPosition: { x: TRAFFIC_LIGHT_POSITION_X, y: TRAFFIC_LIGHT_POSITION_Y },
+    backgroundColor: WINDOW_BACKGROUND_COLOR,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

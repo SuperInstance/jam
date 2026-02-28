@@ -5,6 +5,8 @@ import { ChatMessageView } from '@/components/chat/ChatMessage';
 import type { ChatMessage } from '@/store/chatSlice';
 
 const PAGE_SIZE = 30;
+const DEFAULT_ITEM_HEIGHT = 120;
+const VIEWPORT_INCREASE = { top: 1500, bottom: 800 } as const;
 
 interface AgentChatContainerProps {
   agentId: string;
@@ -134,14 +136,14 @@ export const AgentChatContainer: React.FC<AgentChatContainerProps> = ({
         ref={virtuosoRef}
         data={agentMessages}
         computeItemKey={computeItemKey}
-        defaultItemHeight={120}
+        defaultItemHeight={DEFAULT_ITEM_HEIGHT}
         itemContent={itemContent}
         className="h-full"
         followOutput="auto"
         atBottomStateChange={setAtBottom}
         startReached={handleStartReached}
         initialTopMostItemIndex={agentMessages.length - 1}
-        increaseViewportBy={{ top: 1500, bottom: 800 }}
+        increaseViewportBy={VIEWPORT_INCREASE}
         firstItemIndex={Math.max(0, 1000000 - agentMessages.length)}
         components={components}
       />
